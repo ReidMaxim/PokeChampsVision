@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pokémon Champions Live OCR Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/tesseract.js@v6.0.0/dist/tesseract.min.js"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            background-color: #1e293b;
+            border: 2px solid #475569;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+
+        #videoPreview {
+            width: 100%;
+            display: block;
+            background-color: #000;
+        }
+
+        #cropCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            cursor: crosshair;
+        }
+
+        .roi-box {
+            position: absolute;
+            border: 3px dashed #10b981;
+            background-color: rgba(16, 185, 129, 0.1);
+            cursor: move;
+        }
+
+        .roi-handle {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background-color: #10b981;
+            border: 1px solid #fff;
+            cursor: pointer;
+        }
+
+        .battle-log {
+            background-color: #1e293b;
+            border: 2px solid #475569;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            height: 600px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+
+        .log-entry {
+            margin-bottom: 0.5rem;
+            color: #e2e8f0;
+            word-wrap: break-word;
+        }
+
+        .log-entry.turn {
+            color: #60a5fa;
+            font-weight: bold;
+        }
+
+        .log-entry.action {
+            color: #34d399;
+        }
+
+        .log-entry.status {
+            color: #fbbf24;
+        }
+
+        .log-entry.damage {
+            color: #f87171;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid #475569;
+            border-top-color: #10b981;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .btn-primary {
+            background-color: #10b981;
+            color: #1e293b;
+            font-weight: bold;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary:hover {
+            background-color: #059669;
+            transform: translateY(-2px);
+        }
+
+        .btn-primary:disabled {
+            background-color: #6b7280;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background-color: #475569;
+            color: #e2e8f0;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-secondary:hover {
+            background-color: #64748b;
+        }
+
+        .toggle-btn {
+            background-color: #64748b;
+            color: #e2e8f0;
+            padding: 0.5rem 1.5rem;
+            border-radius: 9999px;
+            cursor: pointer;
+            border: 2px solid #64748b;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+
+        .toggle-btn.active {
+            background-color: #10b981;
+            border-color: #10b981;
+            color: #1e293b;
+        }
+
+        .control-group {
+            background-color: #1e293b;
+            border: 1px solid #475569;
+            border-radius: 0.375rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .control-label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #94a3b8;
+        }
+
+        select, input[type="range"] {
+            background-color: #334155;
+            color: #e2e8f0;
+            border: 1px solid #475569;
+            border-radius: 0.375rem;
+            padding: 0.5rem;
+            width: 100%;
+            font-size: 0.875rem;
+        }
+
+        select:focus, input[type="range"]:focus {
+            outline: none;
+            border-color: #10b981;
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 0.75rem;
+            height: 0.75rem;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+        }
+
+        .status-indicator.inactive {
+            background-color: #6b7280;
+        }
+
+        .status-indicator.active {
+            background-color: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .stat-badge {
+            display: inline-block;
+            background-color: #334155;
+            color: #94a3b8;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-right: 0.5rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .info-box {
+            background-color: #1e293b;
+            border-left: 4px solid #10b981;
+            padding: 1rem;
+            border-radius: 0.375rem;
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+            color: #cbd5e1;
+        }
+
+        @media (max-width: 1024px) {
+            .grid-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100">
+    <div class="min-h-screen p-6">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-4xl font-bold text-emerald-400 mb-2">
+                🎮 Pokémon Champions Live OCR Tracker
+            </h1>
+            <p class="text-slate-400 text-sm">Real-time battle log generation from USB capture device</p>
+        </div>
+
+        <!-- Main Grid Layout -->
+        <div class="grid grid-layout gap-6" style="grid-template-columns: 2fr 1.5fr;">
+            <!-- LEFT COLUMN: Video & Controls -->
+            <div class="space-y-6">
+                <!-- Device Configuration -->
+                <div class="control-group">
+                    <label class="control-label">📹 Video Input Device</label>
+                    <select id="deviceSelect" class="mb-4">
+                        <option value="">-- Select a device --</option>
+                    </select>
+                    <div class="flex gap-2">
+                        <button id="startCaptureBtn" class="btn-primary flex-1">Start Capture</button>
+                        <button id="stopCaptureBtn" class="btn-secondary flex-1" disabled>Stop Capture</button>
+                    </div>
+                </div>
+
+                <!-- Video Preview -->
+                <div class="video-container" id="videoContainer">
+                    <video id="videoPreview" playsinline></video>
+                    <canvas id="cropCanvas"></canvas>
+                    <div id="roiBox" class="roi-box" style="display: none;"></div>
+                </div>
+
+                <!-- ROI Controls -->
+                <div class="control-group">
+                    <label class="control-label">🎯 Region of Interest (ROI)</label>
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="text-xs text-slate-400 block mb-1">X Offset</label>
+                            <input type="range" id="roiX" min="0" max="100" value="0" class="w-full">
+                            <span class="text-xs text-slate-500" id="roiXValue">0%</span>
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-400 block mb-1">Y Offset</label>
+                            <input type="range" id="roiY" min="0" max="100" value="80" class="w-full">
+                            <span class="text-xs text-slate-500" id="roiYValue">80%</span>
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-400 block mb-1">Width</label>
+                            <input type="range" id="roiWidth" min="10" max="100" value="100" class="w-full">
+                            <span class="text-xs text-slate-500" id="roiWidthValue">100%</span>
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-400 block mb-1">Height</label>
+                            <input type="range" id="roiHeight" min="10" max="100" value="20" class="w-full">
+                            <span class="text-xs text-slate-500" id="roiHeightValue">20%</span>
+                        </div>
+                    </div>
+                    <button id="resetRoiBtn" class="btn-secondary w-full">Reset ROI</button>
+                </div>
+
+                <!-- OCR Tracking Controls -->
+                <div class="control-group">
+                    <label class="control-label">⚙️ OCR Engine</label>
+                    <div id="ocrStatus" class="info-box mb-4">
+                        <span class="status-indicator inactive"></span>
+                        <span id="ocrStatusText">Ready to initialize</span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="startTrackerBtn" class="toggle-btn flex-1" disabled>
+                            Start Auto-Tracker
+                        </button>
+                        <button id="stopTrackerBtn" class="toggle-btn flex-1" disabled style="display: none;">
+                            Stop Auto-Tracker
+                        </button>
+                    </div>
+                    <div class="mt-4 text-xs text-slate-400 space-y-1">
+                        <div><span class="stat-badge">Interval</span> 1.5s per frame</div>
+                        <div><span class="stat-badge">Dedup</span> 90% similarity threshold</div>
+                        <div><span class="stat-badge">Engine</span> Tesseract.js v6</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: Battle Log -->
+            <div class="space-y-6">
+                <!-- Stats Header -->
+                <div class="control-group">
+                    <label class="control-label">📊 Session Statistics</label>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-slate-400">Total Captures:</span>
+                            <span id="captureCount" class="font-mono text-emerald-400">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-slate-400">Log Entries:</span>
+                            <span id="logEntryCount" class="font-mono text-emerald-400">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-slate-400">Tracker Status:</span>
+                            <span id="trackerStatus" class="font-mono">
+                                <span class="status-indicator inactive"></span>Inactive
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Battle Log Container -->
+                <div>
+                    <label class="control-label mb-2">🎯 Battle Log</label>
+                    <div id="battleLog" class="battle-log">
+                        <div class="log-entry" style="color: #94a3b8;">
+                            [System] Waiting for video input...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Log Controls -->
+                <div class="flex gap-2">
+                    <button id="copyLogBtn" class="btn-primary flex-1">📋 Copy Battle Log</button>
+                    <button id="clearLogBtn" class="btn-secondary flex-1">🗑️ Clear Log</button>
+                </div>
+
+                <!-- Debug Info -->
+                <div class="info-box">
+                    <strong class="text-emerald-400">💡 Tips:</strong>
+                    <ul class="list-disc list-inside text-xs mt-2 space-y-1">
+                        <li>Adjust ROI sliders to isolate the game text box</li>
+                        <li>Start your capture device before clicking "Start Capture"</li>
+                        <li>OCR will initialize on first use (~30-50MB download)</li>
+                        <li>Press "Start Auto-Tracker" to begin reading text</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================================
+        // INITIALIZATION & STATE
+        // ============================================================================
+
+        const state = {
+            videoStream: null,
+            tesseractWorker: null,
+            isTracking: false,
+            isCapturing: false,
+            trackingInterval: null,
+            lastExtractedText: '',
+            captureCount: 0,
+            logEntries: [],
+            roi: {
+                x: 0,
+                y: 0.8,
+                width: 1.0,
+                height: 0.2
+            },
+            isDraggingRoi: false,
+            dragStartX: 0,
+            dragStartY: 0,
+            dragOffset: { x: 0, y: 0 }
+        };
+
+        const elements = {
+            deviceSelect: document.getElementById('deviceSelect'),
+            videoPreview: document.getElementById('videoPreview'),
+            cropCanvas: document.getElementById('cropCanvas'),
+            roiBox: document.getElementById('roiBox'),
+            startCaptureBtn: document.getElementById('startCaptureBtn'),
+            stopCaptureBtn: document.getElementById('stopCaptureBtn'),
+            startTrackerBtn: document.getElementById('startTrackerBtn'),
+            stopTrackerBtn: document.getElementById('stopTrackerBtn'),
+            battleLog: document.getElementById('battleLog'),
+            copyLogBtn: document.getElementById('copyLogBtn'),
+            clearLogBtn: document.getElementById('clearLogBtn'),
+            roiX: document.getElementById('roiX'),
+            roiY: document.getElementById('roiY'),
+            roiWidth: document.getElementById('roiWidth'),
+            roiHeight: document.getElementById('roiHeight'),
+            roiXValue: document.getElementById('roiXValue'),
+            roiYValue: document.getElementById('roiYValue'),
+            roiWidthValue: document.getElementById('roiWidthValue'),
+            roiHeightValue: document.getElementById('roiHeightValue'),
+            resetRoiBtn: document.getElementById('resetRoiBtn'),
+            ocrStatus: document.getElementById('ocrStatus'),
+            ocrStatusText: document.getElementById('ocrStatusText'),
+            captureCount: document.getElementById('captureCount'),
+            logEntryCount: document.getElementById('logEntryCount'),
+            trackerStatus: document.getElementById('trackerStatus'),
+            videoContainer: document.getElementById('videoContainer')
+        };
+
+        // ============================================================================
+        // OCR & TESSERACT INITIALIZATION
+        // ============================================================================
+
+        async function initializeTesseract() {
+            try {
+                updateOcrStatus('Initializing Tesseract.js...', false);
+                state.tesseractWorker = await Tesseract.createWorker();
+                await state.tesseractWorker.load();
+                await state.tesseractWorker.initialize('eng');
+                updateOcrStatus('✓ Tesseract ready', true);
+                elements.startTrackerBtn.disabled = false;
+                logMessage('[System] OCR engine initialized successfully', 'status');
+                return true;
+            } catch (error) {
+                console.error('Tesseract initialization failed:', error);
+                updateOcrStatus('✗ Initialization failed', false);
+                logMessage(`[Error] OCR initialization failed: ${error.message}`, 'damage');
+                return false;
+            }
+        }
+
+        function updateOcrStatus(text, isActive) {
+            elements.ocrStatusText.textContent = text;
+            const indicator = elements.ocrStatus.querySelector('.status-indicator');
+            if (isActive) {
+                indicator.classList.remove('inactive');
+                indicator.classList.add('active');
+            } else {
+                indicator.classList.remove('active');
+                indicator.classList.add('inactive');
+            }
+        }
+
+        // ============================================================================
+        // VIDEO DEVICE & CAPTURE MANAGEMENT
+        // ============================================================================
+
+        async function enumerateDevices() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+                elements.deviceSelect.innerHTML = '<option value="">-- Select a device --</option>';
+                videoDevices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.textContent = device.label || `Camera ${device.deviceId.substring(0, 5)}...`;
+                    elements.deviceSelect.appendChild(option);
+                });
+
+                logMessage(`[System] Found ${videoDevices.length} video device(s)`, 'status');
+            } catch (error) {
+                console.error('Error enumerating devices:', error);
+                logMessage(`[Error] Failed to enumerate devices: ${error.message}`, 'damage');
+            }
+        }
+
+        async function startCapture() {
+            const deviceId = elements.deviceSelect.value;
+            if (!deviceId) {
+                logMessage('[Error] Please select a video device', 'damage');
+                return;
+            }
+
+            try {
+                state.videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: { deviceId: { exact: deviceId } },
+                    audio: false
+                });
+
+                elements.videoPreview.srcObject = state.videoStream;
+                state.isCapturing = true;
+                elements.startCaptureBtn.disabled = true;
+                elements.stopCaptureBtn.disabled = false;
+                elements.deviceSelect.disabled = true;
+
+                logMessage('[System] Video capture started', 'status');
+
+                // Set canvas size after video loads
+                elements.videoPreview.onloadedmetadata = () => {
+                    updateCanvasSize();
+                };
+            } catch (error) {
+                console.error('Error starting capture:', error);
+                logMessage(`[Error] Failed to start capture: ${error.message}`, 'damage');
+            }
+        }
+
+        function stopCapture() {
+            if (state.videoStream) {
+                state.videoStream.getTracks().forEach(track => track.stop());
+                state.videoStream = null;
+            }
+
+            stopTracking(); // Stop tracking if active
+
+            state.isCapturing = false;
+            elements.startCaptureBtn.disabled = false;
+            elements.stopCaptureBtn.disabled = true;
+            elements.deviceSelect.disabled = false;
+            elements.videoPreview.srcObject = null;
+
+            logMessage('[System] Video capture stopped', 'status');
+        }
+
+        // ============================================================================
+        // CANVAS & ROI MANAGEMENT
+        // ============================================================================
+
+        function updateCanvasSize() {
+            const rect = elements.videoContainer.getBoundingClientRect();
+            elements.cropCanvas.width = rect.width;
+            elements.cropCanvas.height = rect.height;
+            updateRoiBox();
+        }
+
+        function updateRoiBox() {
+            const rect = elements.videoContainer.getBoundingClientRect();
+            const x = state.roi.x * rect.width;
+            const y = state.roi.y * rect.height;
+            const width = state.roi.width * rect.width;
+            const height = state.roi.height * rect.height;
+
+            elements.roiBox.style.left = x + 'px';
+            elements.roiBox.style.top = y + 'px';
+            elements.roiBox.style.width = width + 'px';
+            elements.roiBox.style.height = height + 'px';
+            elements.roiBox.style.display = 'block';
+
+            drawRoiBorder();
+        }
+
+        function drawRoiBorder() {
+            const ctx = elements.cropCanvas.getContext('2d');
+            const rect = elements.videoContainer.getBoundingClientRect();
+
+            ctx.clearRect(0, 0, elements.cropCanvas.width, elements.cropCanvas.height);
+
+            const x = state.roi.x * elements.cropCanvas.width;
+            const y = state.roi.y * elements.cropCanvas.height;
+            const width = state.roi.width * elements.cropCanvas.width;
+            const height = state.roi.height * elements.cropCanvas.height;
+
+            // Semi-transparent overlay outside ROI
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, elements.cropCanvas.width, elements.cropCanvas.height);
+
+            // Clear the ROI area
+            ctx.clearRect(x, y, width, height);
+
+            // Draw ROI border
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(x, y, width, height);
+            ctx.setLineDash([]);
+
+            // Draw corner handles
+            const handleSize = 10;
+            ctx.fillStyle = '#10b981';
+            ctx.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize); // TL
+            ctx.fillRect(x + width - handleSize / 2, y - handleSize / 2, handleSize, handleSize); // TR
+            ctx.fillRect(x - handleSize / 2, y + height - handleSize / 2, handleSize, handleSize); // BL
+            ctx.fillRect(x + width - handleSize / 2, y + height - handleSize / 2, handleSize, handleSize); // BR
+        }
+
+        // ============================================================================
+        // ROI SLIDER CONTROLS
+        // ============================================================================
+
+        function setupRoiControls() {
+            elements.roiX.addEventListener('input', (e) => {
+                state.roi.x = e.target.value / 100;
+                elements.roiXValue.textContent = e.target.value + '%';
+                updateRoiBox();
+            });
+
+            elements.roiY.addEventListener('input', (e) => {
+                state.roi.y = e.target.value / 100;
+                elements.roiYValue.textContent = e.target.value + '%';
+                updateRoiBox();
+            });
+
+            elements.roiWidth.addEventListener('input', (e) => {
+                state.roi.width = e.target.value / 100;
+                elements.roiWidthValue.textContent = e.target.value + '%';
+                updateRoiBox();
+            });
+
+            elements.roiHeight.addEventListener('input', (e) => {
+                state.roi.height = e.target.value / 100;
+                elements.roiHeightValue.textContent = e.target.value + '%';
+                updateRoiBox();
+            });
+
+            elements.resetRoiBtn.addEventListener('click', () => {
+                state.roi = { x: 0, y: 0.8, width: 1.0, height: 0.2 };
+                elements.roiX.value = 0;
+                elements.roiY.value = 80;
+                elements.roiWidth.value = 100;
+                elements.roiHeight.value = 20;
+                elements.roiXValue.textContent = '0%';
+                elements.roiYValue.textContent = '80%';
+                elements.roiWidthValue.textContent = '100%';
+                elements.roiHeightValue.textContent = '20%';
+                updateRoiBox();
+            });
+        }
+
+        // ============================================================================
+        // SCREENSHOT & OCR PROCESSING
+        // ============================================================================
+
+        async function captureAndOcr() {
+            if (!state.isCapturing || !state.videoPreview.readyState === state.videoPreview.HAVE_ENOUGH_DATA) {
+                return;
+            }
+
+            try {
+                // Create temporary canvas for cropped image
+                const tempCanvas = document.createElement('canvas');
+                const rect = elements.videoContainer.getBoundingClientRect();
+                const videoWidth = elements.videoPreview.videoWidth;
+                const videoHeight = elements.videoPreview.videoHeight;
+
+                // Calculate ROI in video coordinates
+                const roiX = state.roi.x * videoWidth;
+                const roiY = state.roi.y * videoHeight;
+                const roiWidth = state.roi.width * videoWidth;
+                const roiHeight = state.roi.height * videoHeight;
+
+                tempCanvas.width = roiWidth;
+                tempCanvas.height = roiHeight;
+
+                const ctx = tempCanvas.getContext('2d');
+                ctx.drawImage(
+                    elements.videoPreview,
+                    roiX, roiY, roiWidth, roiHeight,
+                    0, 0, roiWidth, roiHeight
+                );
+
+                const imageData = tempCanvas.toDataURL('image/png');
+
+                // Send to Tesseract
+                updateOcrStatus('Processing frame...', true);
+                const result = await state.tesseractWorker.recognize(imageData);
+                const extractedText = result.data.text.trim();
+
+                state.captureCount++;
+                elements.captureCount.textContent = state.captureCount;
+
+                // Deduplication: Check similarity
+                if (extractedText && extractedText !== state.lastExtractedText) {
+                    const similarity = calculateSimilarity(extractedText, state.lastExtractedText);
+                    if (similarity < 0.9) {
+                        // New text detected
+                        state.lastExtractedText = extractedText;
+                        const lines = extractedText.split('\n').filter(line => line.trim());
+                        lines.forEach(line => {
+                            if (line.trim()) {
+                                logMessage(`[Turn] ${line}`, 'action');
+                            }
+                        });
+                    }
+                }
+
+                updateOcrStatus('✓ Ready', true);
+            } catch (error) {
+                console.error('OCR error:', error);
+                updateOcrStatus('✗ OCR failed', false);
+            }
+        }
+
+        function calculateSimilarity(str1, str2) {
+            if (!str1 || !str2) return 0;
+            const len = Math.max(str1.length, str2.length);
+            if (len === 0) return 1;
+            const dist = levenshteinDistance(str1, str2);
+            return 1 - dist / len;
+        }
+
+        function levenshteinDistance(str1, str2) {
+            const matrix = [];
+            for (let i = 0; i <= str2.length; i++) {
+                matrix[i] = [i];
+            }
+            for (let j = 0; j <= str1.length; j++) {
+                matrix[0][j] = j;
+            }
+            for (let i = 1; i <= str2.length; i++) {
+                for (let j = 1; j <= str1.length; j++) {
+                    if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+                        matrix[i][j] = matrix[i - 1][j - 1];
+                    } else {
+                        matrix[i][j] = Math.min(
+                            matrix[i - 1][j - 1] + 1,
+                            matrix[i][j - 1] + 1,
+                            matrix[i - 1][j] + 1
+                        );
+                    }
+                }
+            }
+            return matrix[str2.length][str1.length];
+        }
+
+        // ============================================================================
+        // AUTO-TRACKING
+        // ============================================================================
+
+        function startTracking() {
+            if (!state.tesseractWorker) {
+                logMessage('[Error] OCR engine not initialized', 'damage');
+                return;
+            }
+
+            state.isTracking = true;
+            elements.startTrackerBtn.style.display = 'none';
+            elements.stopTrackerBtn.style.display = 'block';
+            elements.startTrackerBtn.disabled = true;
+            elements.stopTrackerBtn.disabled = false;
+
+            updateTrackerStatus(true);
+            logMessage('[System] Auto-tracker started (1.5s interval)', 'status');
+
+            // Capture every 1.5 seconds
+            state.trackingInterval = setInterval(() => {
+                captureAndOcr();
+            }, 1500);
+        }
+
+        function stopTracking() {
+            if (state.trackingInterval) {
+                clearInterval(state.trackingInterval);
+                state.trackingInterval = null;
+            }
+
+            state.isTracking = false;
+            elements.startTrackerBtn.style.display = 'block';
+            elements.stopTrackerBtn.style.display = 'none';
+            elements.startTrackerBtn.disabled = false;
+            elements.stopTrackerBtn.disabled = true;
+
+            updateTrackerStatus(false);
+            logMessage('[System] Auto-tracker stopped', 'status');
+        }
+
+        function updateTrackerStatus(isActive) {
+            const statusSpan = elements.trackerStatus.querySelector('.status-indicator');
+            if (isActive) {
+                statusSpan.classList.remove('inactive');
+                statusSpan.classList.add('active');
+                elements.trackerStatus.innerHTML = '<span class="status-indicator active"></span>Active';
+            } else {
+                statusSpan.classList.remove('active');
+                statusSpan.classList.add('inactive');
+                elements.trackerStatus.innerHTML = '<span class="status-indicator inactive"></span>Inactive';
+            }
+        }
+
+        // ============================================================================
+        // LOGGING & DISPLAY
+        // ============================================================================
+
+        function logMessage(message, type = 'action') {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.textContent = message;
+            elements.battleLog.appendChild(logEntry);
+            elements.battleLog.scrollTop = elements.battleLog.scrollHeight;
+
+            state.logEntries.push(message);
+            elements.logEntryCount.textContent = state.logEntries.length;
+        }
+
+        function clearLog() {
+            elements.battleLog.innerHTML = '<div class="log-entry" style="color: #94a3b8;">[System] Log cleared</div>';
+            state.logEntries = [];
+            elements.logEntryCount.textContent = '0';
+        }
+
+        function copyBattleLog() {
+            const logText = state.logEntries.join('\n');
+            navigator.clipboard.writeText(logText).then(() => {
+                logMessage('[System] Battle log copied to clipboard!', 'status');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                logMessage('[Error] Failed to copy log', 'damage');
+            });
+        }
+
+        // ============================================================================
+        // EVENT LISTENERS & SETUP
+        // ============================================================================
+
+        function setupEventListeners() {
+            elements.deviceSelect.addEventListener('change', () => {});
+
+            elements.startCaptureBtn.addEventListener('click', startCapture);
+            elements.stopCaptureBtn.addEventListener('click', stopCapture);
+
+            elements.startTrackerBtn.addEventListener('click', startTracking);
+            elements.stopTrackerBtn.addEventListener('click', stopTracking);
+
+            elements.copyLogBtn.addEventListener('click', copyBattleLog);
+            elements.clearLogBtn.addEventListener('click', clearLog);
+
+            window.addEventListener('resize', updateCanvasSize);
+        }
+
+        // ============================================================================
+        // INITIALIZATION
+        // ============================================================================
+
+        async function initialize() {
+            logMessage('[System] App initialized', 'status');
+            setupEventListeners();
+            setupRoiControls();
+            enumerateDevices();
+            await initializeTesseract();
+
+            // Listen for device changes
+            navigator.mediaDevices.addEventListener('devicechange', enumerateDevices);
+        }
+
+        // Start app
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initialize);
+        } else {
+            initialize();
+        }
+    </script>
+</body>
+</html>

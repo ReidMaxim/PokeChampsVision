@@ -217,7 +217,7 @@
             <h1 class="text-4xl font-bold text-emerald-400 mb-2">
                 🎮 Pokémon Champions Live OCR Tracker
             </h1>
-            <p class="text-slate-400 text-sm">High-Speed Optimized Battle Log</p>
+            <p class="text-slate-400 text-sm">2x High-Resolution Upscaled OCR Engine</p>
         </div>
 
         <!-- Main Grid Layout -->
@@ -367,7 +367,7 @@
                     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\' '
                 });
 
-                updateOcrStatus('✓ Tesseract ready (High-Speed Mode)', true);
+                updateOcrStatus('✓ Tesseract ready (2x Upscale Mode)', true);
                 elements.startTrackerBtn.disabled = false;
                 logMessage('[System] OCR engine initialized successfully', 'system');
             } catch (error) {
@@ -549,11 +549,21 @@
                 const roiWidth = state.roi.width * videoWidth;
                 const roiHeight = state.roi.height * videoHeight;
 
-                tempCanvas.width = roiWidth;
-                tempCanvas.height = roiHeight;
+                // 2X Upscale multiplier for crystal-clear character recognition
+                const scale = 2;
+                tempCanvas.width = roiWidth * scale;
+                tempCanvas.height = roiHeight * scale;
 
                 const ctx = tempCanvas.getContext('2d');
-                ctx.drawImage(elements.videoPreview, roiX, roiY, roiWidth, roiHeight, 0, 0, roiWidth, roiHeight);
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                
+                // Draw upscaled crop directly from video stream
+                ctx.drawImage(
+                    elements.videoPreview, 
+                    roiX, roiY, roiWidth, roiHeight, 
+                    0, 0, roiWidth * scale, roiHeight * scale
+                );
 
                 const result = await state.tesseractWorker.recognize(tempCanvas.toDataURL('image/png'));
                 let rawText = result.data.text.trim();
@@ -573,7 +583,6 @@
                     const now = Date.now();
 
                     if (isValidBattleLine(currentSentence)) {
-                        // Reduced cooldown from 2000ms to 700ms to catch fast turns
                         if (currentSentence !== state.lastCommittedText && (now - state.lastCommitTime > 700)) {
                             state.lastCommittedText = currentSentence;
                             state.lastCommitTime = now;
@@ -595,7 +604,7 @@
             elements.stopTrackerBtn.style.display = 'block';
             elements.startTrackerBtn.disabled = true;
             elements.stopTrackerBtn.disabled = false;
-            logMessage('[System] High-speed tracker started (0.3s interval)', 'system');
+            logMessage('[System] 2x Upscaled tracker started (0.3s interval)', 'system');
 
             state.trackingInterval = setInterval(processOcrTick, 300);
         }

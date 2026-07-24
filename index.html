@@ -47,27 +47,32 @@
             display: block;
         }
 
-        .battle-log {
+        .battle-log, .debug-log {
             background-color: #1e293b;
             border: 2px solid #475569;
             border-radius: 0.5rem;
             padding: 1rem;
-            height: 600px;
-            overflow-y: auto;
             font-family: 'Courier New', monospace;
             font-size: 0.875rem;
             line-height: 1.5;
+        }
+
+        .battle-log {
+            height: 450px;
+            overflow-y: auto;
+        }
+
+        .debug-log {
+            height: 120px;
+            overflow-y: auto;
+            color: #94a3b8;
+            font-size: 0.75rem;
         }
 
         .log-entry {
             margin-bottom: 0.5rem;
             color: #e2e8f0;
             word-wrap: break-word;
-        }
-
-        .log-entry.turn {
-            color: #60a5fa;
-            font-weight: bold;
         }
 
         .log-entry.action {
@@ -204,7 +209,7 @@
             <h1 class="text-4xl font-bold text-emerald-400 mb-2">
                 🎮 Pokémon Champions Live OCR Tracker
             </h1>
-            <p class="text-slate-400 text-sm">Automated high-speed battle log generation</p>
+            <p class="text-slate-400 text-sm">Debug-Enabled High-Speed Battle Log Generator</p>
         </div>
 
         <!-- Main Grid Layout -->
@@ -276,7 +281,14 @@
                             Stop Auto-Tracker
                         </button>
                     </div>
-                    <p class="text-xs text-slate-400 mt-3 text-center">Optimized for fast text speeds (0.3s check interval).</p>
+                </div>
+
+                <!-- Live Raw OCR Debug Output -->
+                <div>
+                    <label class="control-label mb-2">🔍 Live Raw OCR Output (Debug)</label>
+                    <div id="debugLog" class="debug-log">
+                        [Debug] Raw scanner output will appear here...
+                    </div>
                 </div>
 
                 <!-- Battle Log Container -->
@@ -304,6 +316,7 @@
             tesseractWorker: null,
             isCapturing: false,
             isTracking: false,
+            isProcessingOcr: false,
             trackingInterval: null,
             lastRawText: '',
             consecutiveMatches: 0,
@@ -322,6 +335,7 @@
             startTrackerBtn: document.getElementById('startTrackerBtn'),
             stopTrackerBtn: document.getElementById('stopTrackerBtn'),
             battleLog: document.getElementById('battleLog'),
+            debugLog: document.getElementById('debugLog'),
             copyLogBtn: document.getElementById('copyLogBtn'),
             clearLogBtn: document.getElementById('clearLogBtn'),
             roiX: document.getElementById('roiX'),
@@ -346,7 +360,7 @@
                     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\' '
                 });
 
-                updateOcrStatus('✓ Tesseract ready (High-Speed Mode)', true);
+                updateOcrStatus('✓ Tesseract ready (Debug Mode)', true);
                 elements.startTrackerBtn.disabled = false;
                 logMessage('[System] OCR engine initialized successfully', 'status');
             } catch (error) {
@@ -487,16 +501,21 @@
         }
 
         async function processOcrTick() {
-            if (!state.isCapturing || elements.videoPreview.readyState < 2) {
+            if (!state.isCapturing || elements.videoPreview.readyState < 2 || state.isProcessingOcr) {
                 return;
             }
+
+            state.isProcessingOcr = true;
 
             try {
                 const tempCanvas = document.createElement('canvas');
                 const videoWidth = elements.videoPreview.videoWidth;
                 const videoHeight = elements.videoPreview.videoHeight;
 
-                if (!videoWidth || !videoHeight) return;
+                if (!videoWidth || !videoHeight) {
+                    state.isProcessingOcr = false;
+                    return;
+                }
 
                 const roiX = state.roi.x * videoWidth;
                 const roiY = state.roi.y * videoHeight;
@@ -509,29 +528,38 @@
                 const ctx = tempCanvas.getContext('2d');
                 ctx.drawImage(elements.videoPreview, roiX, roiY, roiWidth, roiHeight, 0, 0, roiWidth, roiHeight);
 
+                // Contrast enhancement & Binarization to make Pokémon text pop out
                 let imgData = ctx.getImageData(0, 0, roiWidth, roiHeight);
                 let data = imgData.data;
                 for (let i = 0; i < data.length; i += 4) {
                     let avg = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-                    data[i] = avg;
-                    data[i + 1] = avg;
-                    data[i + 2] = avg;
+                    // High contrast thresholding (turns grayish text white and dark backgrounds black)
+                    let enhanced = avg > 140 ? 255 : 0;
+                    data[i] = enhanced;
+                    data[i + 1] = enhanced;
+                    data[i + 2] = enhanced;
                 }
                 ctx.putImageData(imgData, 0, 0);
 
                 const result = await state.tesseractWorker.recognize(tempCanvas.toDataURL('image/png'));
                 let rawText = result.data.text.trim();
 
+                // Push to debug panel so you can see raw recognition instantly
+                if (rawText) {
+                    elements.debugLog.innerHTML = `[Raw] ${rawText.replace(/\n/g, ' | ')}`;
+                } else {
+                    elements.debugLog.innerHTML = `[Raw] (Empty/No text detected)`;
+                }
+
                 const validLines = rawText.split('\n')
                     .map(l => l.trim())
-                    .filter(l => l.length >= 3 && /[a-zA-Z]{2,}/.test(l) && !/[|\\=_~<>]{2,}/.test(l));
+                    .filter(l => l.length >= 2 && /[a-zA-Z]{2,}/.test(l));
 
                 if (validLines.length > 0) {
                     let currentSentence = validLines.join(' ');
 
                     if (currentSentence === state.lastRawText) {
                         state.consecutiveMatches++;
-                        // Requires 2 consecutive frames (~0.6s total verification) to lock in text cleanly
                         if (state.consecutiveMatches === 2 && currentSentence !== state.committedText) {
                             state.committedText = currentSentence;
                             logMessage(`[Action] ${currentSentence}`, 'action');
@@ -543,6 +571,8 @@
                 }
             } catch (error) {
                 console.error('OCR Tick error:', error);
+            } finally {
+                state.isProcessingOcr = false;
             }
         }
 
@@ -553,9 +583,8 @@
             elements.stopTrackerBtn.style.display = 'block';
             elements.startTrackerBtn.disabled = true;
             elements.stopTrackerBtn.disabled = false;
-            logMessage('[System] High-speed auto-tracker started (0.3s interval)', 'status');
+            logMessage('[System] High-speed debug tracker started (0.3s interval)', 'status');
 
-            // 300ms scan rate for quick text boxes
             state.trackingInterval = setInterval(processOcrTick, 300);
         }
 

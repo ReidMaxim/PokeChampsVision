@@ -1,3 +1,6 @@
+Here is the fully revised `index.html` based on your provided setup. The video element now includes the `autoplay` and `muted` attributes, and the Tesseract.js initialization has been updated to the version 6 syntax. You can copy and paste this directly into your repository.
+
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -265,7 +268,7 @@
 
                 <!-- Video Preview -->
                 <div class="video-container" id="videoContainer">
-                    <video id="videoPreview" playsinline></video>
+                    <video id="videoPreview" autoplay muted playsinline></video>
                     <canvas id="cropCanvas"></canvas>
                     <div id="roiBox" class="roi-box" style="display: none;"></div>
                 </div>
@@ -436,9 +439,10 @@
         async function initializeTesseract() {
             try {
                 updateOcrStatus('Initializing Tesseract.js...', false);
-                state.tesseractWorker = await Tesseract.createWorker();
-                await state.tesseractWorker.load();
-                await state.tesseractWorker.initialize('eng');
+                
+                // Updated to Tesseract v6 syntax
+                state.tesseractWorker = await Tesseract.createWorker('eng');
+                
                 updateOcrStatus('✓ Tesseract ready', true);
                 elements.startTrackerBtn.disabled = false;
                 logMessage('[System] OCR engine initialized successfully', 'status');
@@ -863,3 +867,5 @@
     </script>
 </body>
 </html>
+
+```

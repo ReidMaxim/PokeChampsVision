@@ -113,6 +113,23 @@
             background-color: #64748b;
         }
 
+        .toggle-btn {
+            background-color: #475569;
+            color: #e2e8f0;
+            padding: 0.75rem 1.5rem;
+            border-radius: 9999px;
+            cursor: pointer;
+            border: 2px solid #475569;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .toggle-btn.active {
+            background-color: #10b981;
+            border-color: #10b981;
+            color: #1e293b;
+        }
+
         .control-group {
             background-color: #1e293b;
             border: 1px solid #475569;
@@ -181,7 +198,7 @@
             <h1 class="text-4xl font-bold text-emerald-400 mb-2">
                 🎮 Pokémon Champions Clean OCR Tracker
             </h1>
-            <p class="text-slate-400 text-sm">On-demand high-contrast text extraction tool</p>
+            <p class="text-slate-400 text-sm">Automated stability-verified battle log generation</p>
         </div>
 
         <!-- Main Grid Layout -->
@@ -236,24 +253,29 @@
                 </div>
             </div>
 
-            <!-- RIGHT COLUMN: Capture Trigger & Battle Log -->
+            <!-- RIGHT COLUMN: Tracker Controls & Battle Log -->
             <div class="space-y-6">
                 <!-- OCR Action Panel -->
                 <div class="control-group">
-                    <label class="control-label">⚙️ High-Contrast OCR Capture</label>
+                    <label class="control-label">⚙️ Stability OCR Engine</label>
                     <div id="ocrStatus" class="info-box mb-4">
                         <span class="status-indicator inactive"></span>
                         <span id="ocrStatusText">Ready to initialize</span>
                     </div>
-                    <button id="captureTextBtn" class="btn-primary w-full text-base py-3" disabled>
-                        📸 Capture & Read Text Box Now
-                    </button>
-                    <p class="text-xs text-slate-400 mt-2 text-center">Applies grayscale and threshold filtering to remove background clutter.</p>
+                    <div class="flex gap-2">
+                        <button id="startTrackerBtn" class="toggle-btn flex-1" disabled>
+                            Start Auto-Tracker
+                        </button>
+                        <button id="stopTrackerBtn" class="toggle-btn flex-1" disabled style="display: none;">
+                            Stop Auto-Tracker
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-3 text-center">Applies high-contrast filtering and duplicate verification to filter out animation noise.</p>
                 </div>
 
                 <!-- Battle Log Container -->
                 <div>
-                    <label class="control-label mb-2">🎯 Filtered Battle Log</label>
+                    <label class="control-label mb-2">🎯 Clean Battle Log</label>
                     <div id="battleLog" class="battle-log">
                         <div class="log-entry" style="color: #94a3b8;">
                             [System] Waiting for video input...
@@ -275,6 +297,11 @@
             videoStream: null,
             tesseractWorker: null,
             isCapturing: false,
+            isTracking: false,
+            trackingInterval: null,
+            lastRawText: '',
+            consecutiveMatches: 0,
+            committedText: '',
             logEntries: [],
             roi: { x: 0, y: 0.8, width: 1.0, height: 0.2 }
         };
@@ -286,7 +313,8 @@
             roiBox: document.getElementById('roiBox'),
             startCaptureBtn: document.getElementById('startCaptureBtn'),
             stopCaptureBtn: document.getElementById('stopCaptureBtn'),
-            captureTextBtn: document.getElementById('captureTextBtn'),
+            startTrackerBtn: document.getElementById('startTrackerBtn'),
+            stopTrackerBtn: document.getElementById('stopTrackerBtn'),
             battleLog: document.getElementById('battleLog'),
             copyLogBtn: document.getElementById('copyLogBtn'),
             clearLogBtn: document.getElementById('clearLogBtn'),
@@ -307,8 +335,14 @@
             try {
                 updateOcrStatus('Initializing Tesseract engine...', false);
                 state.tesseractWorker = await Tesseract.createWorker('eng');
-                updateOcrStatus('✓ Tesseract ready (High-Contrast Mode)', true);
-                elements.captureTextBtn.disabled = false;
+                
+                // Set parameters to optimize alphanumeric recognition and text lines
+                await state.tesseractWorker.setParameters({
+                    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\' '
+                });
+
+                updateOcrStatus('✓ Tesseract ready (Stability Mode)', true);
+                elements.startTrackerBtn.disabled = false;
                 logMessage('[System] OCR engine initialized successfully', 'status');
             } catch (error) {
                 console.error('Tesseract initialization failed:', error);
@@ -381,6 +415,7 @@
                 state.videoStream.getTracks().forEach(track => track.stop());
                 state.videoStream = null;
             }
+            stopTracking();
             state.isCapturing = false;
             elements.startCaptureBtn.disabled = false;
             elements.stopCaptureBtn.disabled = true;
@@ -421,16 +456,13 @@
             ctx.setLineDash([]);
         }
 
-        // HIGH-CONTRAST IMAGE PRE-PROCESSING FILTER
-        async function captureAndProcessOcr() {
+        // STABILITY-VERIFIED OCR PROCESSING LOOP
+        async function processOcrTick() {
             if (!state.isCapturing || elements.videoPreview.readyState !== elements.videoPreview.HAVE_ENOUGH_DATA) {
-                logMessage('[Error] Start video capture first', 'damage');
                 return;
             }
 
             try {
-                updateOcrStatus('Filtering & processing frame...', true);
-
                 const tempCanvas = document.createElement('canvas');
                 const videoWidth = elements.videoPreview.videoWidth;
                 const videoHeight = elements.videoPreview.videoHeight;
@@ -444,49 +476,73 @@
                 tempCanvas.height = roiHeight;
 
                 const ctx = tempCanvas.getContext('2d');
-                // Draw cropped region from video source
                 ctx.drawImage(elements.videoPreview, roiX, roiY, roiWidth, roiHeight, 0, 0, roiWidth, roiHeight);
 
-                // Apply Grayscale and Contrast Filter to isolate white text
+                // High-Contrast Black & White Filter
                 let imgData = ctx.getImageData(0, 0, roiWidth, roiHeight);
                 let data = imgData.data;
                 for (let i = 0; i < data.length; i += 4) {
                     let avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-                    // High-contrast threshold: Push bright text to pure white, background to black
-                    let threshold = avg > 160 ? 255 : 0; 
-                    data[i]     = threshold; // R
-                    data[i + 1] = threshold; // G
-                    data[i + 2] = threshold; // B
+                    let threshold = avg > 150 ? 255 : 0; 
+                    data[i] = threshold;
+                    data[i + 1] = threshold;
+                    data[i + 2] = threshold;
                 }
                 ctx.putImageData(imgData, 0, 0);
 
-                const processedImageUrl = tempCanvas.toDataURL('image/png');
+                const result = await state.tesseractWorker.recognize(tempCanvas.toDataURL('image/png'));
+                let rawText = result.data.text.trim();
 
-                // Perform OCR on clean high-contrast black/white pixels
-                const result = await state.tesseractWorker.recognize(processedImageUrl);
-                let cleanText = result.data.text.trim();
+                // Clean and filter lines via Strict Regex Guardrails
+                const validLines = rawText.split('\n')
+                    .map(l => l.trim())
+                    .filter(l => l.length >= 4 && /[a-zA-Z]{3,}/.test(l) && !/[|\\=_]{2,}/.test(l));
 
-                if (cleanText) {
-                    // Filter out weird garbage symbol artifacts typical of messy OCR reads
-                    const lines = cleanText.split('\n')
-                        .map(l => l.trim())
-                        .filter(l => l.length > 2 && /[a-zA-Z0-9]/.test(l));
+                if (validLines.length > 0) {
+                    let currentSentence = validLines.join(' ');
 
-                    if (lines.length > 0) {
-                        lines.forEach(line => logMessage(`[Action] ${line}`, 'action'));
+                    // Stability Verification: Must match the previous read consecutively to pass
+                    if (currentSentence === state.lastRawText) {
+                        state.consecutiveMatches++;
+                        // If stable for 2 cycles and not a duplicate of the last logged line
+                        if (state.consecutiveMatches === 2 && currentSentence !== state.committedText) {
+                            state.committedText = currentSentence;
+                            logMessage(`[Action] ${currentSentence}`, 'action');
+                        }
                     } else {
-                        logMessage('[System] No clear text detected in frame', 'status');
+                        state.lastRawText = currentSentence;
+                        state.consecutiveMatches = 1;
                     }
-                } else {
-                    logMessage('[System] Text box appeared empty', 'status');
                 }
-
-                updateOcrStatus('✓ Ready', true);
             } catch (error) {
-                console.error('OCR Processing error:', error);
-                updateOcrStatus('✗ Read failed', false);
-                logMessage(`[Error] OCR processing error: ${error.message}`, 'damage');
+                console.error('OCR Tick error:', error);
             }
+        }
+
+        function startTracking() {
+            if (!state.tesseractWorker) return;
+            state.isTracking = true;
+            elements.startTrackerBtn.style.display = 'none';
+            elements.stopTrackerBtn.style.display = 'block';
+            elements.startTrackerBtn.disabled = true;
+            elements.stopTrackerBtn.disabled = false;
+            logMessage('[System] Stability auto-tracker started', 'status');
+
+            // Run verification scan every 1 second
+            state.trackingInterval = setInterval(processOcrTick, 1000);
+        }
+
+        function stopTracking() {
+            if (state.trackingInterval) {
+                clearInterval(state.trackingInterval);
+                state.trackingInterval = null;
+            }
+            state.isTracking = false;
+            elements.startTrackerBtn.style.display = 'block';
+            elements.stopTrackerBtn.style.display = 'none';
+            elements.startTrackerBtn.disabled = false;
+            elements.stopTrackerBtn.disabled = true;
+            logMessage('[System] Auto-tracker stopped', 'status');
         }
 
         function setupRoiControls() {
@@ -527,7 +583,8 @@
         function setupEventListeners() {
             elements.startCaptureBtn.addEventListener('click', startCapture);
             elements.stopCaptureBtn.addEventListener('click', stopCapture);
-            elements.captureTextBtn.addEventListener('click', captureAndProcessOcr);
+            elements.startTrackerBtn.addEventListener('click', startTracking);
+            elements.stopTrackerBtn.addEventListener('click', stopTracking);
             elements.copyLogBtn.addEventListener('click', () => {
                 navigator.clipboard.writeText(state.logEntries.join('\n'));
                 logMessage('[System] Log copied to clipboard!', 'status');
@@ -535,6 +592,7 @@
             elements.clearLogBtn.addEventListener('click', () => {
                 elements.battleLog.innerHTML = '<div class="log-entry" style="color: #94a3b8;">[System] Log cleared</div>';
                 state.logEntries = [];
+                state.committedText = '';
             });
             window.addEventListener('resize', updateCanvasSize);
         }

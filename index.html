@@ -19,7 +19,6 @@
             border: 2px solid #475569;
             border-radius: 0.5rem;
             overflow: hidden;
-            min-height: 240px;
         }
 
         #videoPreview {
@@ -36,13 +35,16 @@
             width: 100%;
             height: 100%;
             pointer-events: none;
+            z-index: 10;
         }
 
         .roi-box {
             position: absolute;
             border: 3px dashed #10b981;
-            background-color: rgba(16, 185, 129, 0.1);
+            background-color: rgba(16, 185, 129, 0.15);
             pointer-events: none;
+            z-index: 20;
+            display: block;
         }
 
         .battle-log {
@@ -225,7 +227,7 @@
                 <div class="video-container" id="videoContainer">
                     <video id="videoPreview" autoplay muted playsinline></video>
                     <canvas id="cropCanvas"></canvas>
-                    <div id="roiBox" class="roi-box" style="display: none;"></div>
+                    <div id="roiBox" class="roi-box"></div>
                 </div>
 
                 <!-- ROI Controls -->
@@ -401,9 +403,7 @@
                 });
 
                 elements.videoPreview.srcObject = state.videoStream;
-                
-                // Force play to ensure frames stream immediately
-                await elements.videoPreview.play().catch(e => console.log("Auto-play prevented/handled:", e));
+                await elements.videoPreview.play().catch(e => console.log("Auto-play notice:", e));
 
                 state.isCapturing = true;
                 elements.startCaptureBtn.disabled = true;
@@ -412,8 +412,9 @@
 
                 logMessage('[System] Video capture started', 'status');
                 
-                // Explicitly update canvas size once dimensions are active
-                setTimeout(updateCanvasSize, 300);
+                // Trigger box rendering immediately and check periodically for sizing
+                updateCanvasSize();
+                setTimeout(updateCanvasSize, 500);
             } catch (error) {
                 logMessage(`[Error] Capture failed: ${error.message}`, 'damage');
             }
@@ -435,40 +436,46 @@
         }
 
         function updateCanvasSize() {
-            const container = document.getElementById('videoContainer');
-            const rect = container.getBoundingClientRect();
-            
-            if (rect.width === 0) return;
+            const video = elements.videoPreview;
+            if (!video.videoWidth) {
+                // If video hasn't loaded dimensions yet, try again shortly
+                if (state.isCapturing) setTimeout(updateCanvasSize, 200);
+                return;
+            }
 
-            elements.cropCanvas.width = rect.width;
-            elements.cropCanvas.height = elements.videoPreview.offsetHeight || rect.height;
+            const width = video.clientWidth;
+            const height = video.clientHeight;
+
+            elements.cropCanvas.width = width;
+            elements.cropCanvas.height = height;
             updateRoiBox();
         }
 
         function updateRoiBox() {
-            const rect = elements.cropCanvas;
-            if (rect.width === 0) return;
+            const width = elements.cropCanvas.width;
+            const height = elements.cropCanvas.height;
+            if (!width || !height) return;
 
-            const x = state.roi.x * rect.width;
-            const y = state.roi.y * rect.height;
-            const width = state.roi.width * rect.width;
-            const height = state.roi.height * rect.height;
+            const x = state.roi.x * width;
+            const y = state.roi.y * height;
+            const boxWidth = state.roi.width * width;
+            const boxHeight = state.roi.height * height;
 
             elements.roiBox.style.left = x + 'px';
             elements.roiBox.style.top = y + 'px';
-            elements.roiBox.style.width = width + 'px';
-            elements.roiBox.style.height = height + 'px';
+            elements.roiBox.style.width = boxWidth + 'px';
+            elements.roiBox.style.height = boxHeight + 'px';
             elements.roiBox.style.display = 'block';
 
             const ctx = elements.cropCanvas.getContext('2d');
-            ctx.clearRect(0, 0, rect.width, rect.height);
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-            ctx.fillRect(0, 0, rect.width, rect.height);
-            ctx.clearRect(x, y, width, height);
+            ctx.clearRect(0, 0, width, height);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.fillRect(0, 0, width, height);
+            ctx.clearRect(x, y, boxWidth, boxHeight);
             ctx.strokeStyle = '#10b981';
             ctx.lineWidth = 3;
             ctx.setLineDash([5, 5]);
-            ctx.strokeRect(x, y, width, height);
+            ctx.strokeRect(x, y, boxWidth, boxHeight);
             ctx.setLineDash([]);
         }
 

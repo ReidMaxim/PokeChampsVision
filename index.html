@@ -217,7 +217,7 @@
             <h1 class="text-4xl font-bold text-emerald-400 mb-2">
                 🎮 Pokémon Champions Live OCR Tracker
             </h1>
-            <p class="text-slate-400 text-sm">Smart-Filtered Battle Log Generator</p>
+            <p class="text-slate-400 text-sm">High-Speed Optimized Battle Log</p>
         </div>
 
         <!-- Main Grid Layout -->
@@ -367,7 +367,7 @@
                     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\' '
                 });
 
-                updateOcrStatus('✓ Tesseract ready (Filtered Mode)', true);
+                updateOcrStatus('✓ Tesseract ready (High-Speed Mode)', true);
                 elements.startTrackerBtn.disabled = false;
                 logMessage('[System] OCR engine initialized successfully', 'system');
             } catch (error) {
@@ -513,10 +513,10 @@
                 'used', 'fainted', 'go!', 'evolved', 'sent out', 
                 'effective', 'missed', 'critical', 'fell', 'rose', 
                 'sp. atk', 'sp. def', 'attack', 'defense', 'speed',
-                'hp', 'item', 'ability', 'terastallized'
+                'hp', 'item', 'ability', 'terastallized', 'mega'
             ];
             const hasKeyword = battleKeywords.some(keyword => lower.includes(keyword));
-            const hasGoodLength = text.length >= 8;
+            const hasGoodLength = text.length >= 6;
             return hasKeyword && hasGoodLength;
         }
 
@@ -572,9 +572,9 @@
                     let currentSentence = validLines.join(' ');
                     const now = Date.now();
 
-                    // Only log if it passes strict battle grammar check and cooldown
                     if (isValidBattleLine(currentSentence)) {
-                        if (currentSentence !== state.lastCommittedText && (now - state.lastCommitTime > 2000)) {
+                        // Reduced cooldown from 2000ms to 700ms to catch fast turns
+                        if (currentSentence !== state.lastCommittedText && (now - state.lastCommitTime > 700)) {
                             state.lastCommittedText = currentSentence;
                             state.lastCommitTime = now;
                             logMessage(currentSentence, getLogType(currentSentence));
@@ -595,7 +595,7 @@
             elements.stopTrackerBtn.style.display = 'block';
             elements.startTrackerBtn.disabled = true;
             elements.stopTrackerBtn.disabled = false;
-            logMessage('[System] Filtered battle tracker started (0.3s interval)', 'system');
+            logMessage('[System] High-speed tracker started (0.3s interval)', 'system');
 
             state.trackingInterval = setInterval(processOcrTick, 300);
         }

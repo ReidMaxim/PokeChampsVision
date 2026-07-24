@@ -1,3 +1,8 @@
+Here is your fully updated `index.html` file with all the fixes included—the updated Tesseract initialization, the video autoplay attributes, the camera permissions prompt, and the corrected ready-state check for the auto-tracker.
+
+You can copy and paste this directly into your repository to overwrite your current version.
+
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -469,8 +474,6 @@
 
         async function enumerateDevices() {
             try {
-                // NEW ADDITION: Request a temporary video stream to trigger browser permissions
-                // This unlocks the real names (labels) of the devices
                 try {
                     const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
                     tempStream.getTracks().forEach(track => track.stop());
@@ -486,7 +489,6 @@
                 videoDevices.forEach(device => {
                     const option = document.createElement('option');
                     option.value = device.deviceId;
-                    // It will now successfully grab device.label
                     option.textContent = device.label || `Camera ${device.deviceId.substring(0, 5)}...`;
                     elements.deviceSelect.appendChild(option);
                 });
@@ -650,7 +652,7 @@
         // ============================================================================
 
         async function captureAndOcr() {
-            if (!state.isCapturing || !state.videoPreview.readyState === state.videoPreview.HAVE_ENOUGH_DATA) {
+            if (!state.isCapturing || elements.videoPreview.readyState !== elements.videoPreview.HAVE_ENOUGH_DATA) {
                 return;
             }
 
@@ -848,9 +850,7 @@
             setupEventListeners();
             setupRoiControls();
             
-            // First time loading, request enumeration which now asks for permission
             await enumerateDevices();
-            
             await initializeTesseract();
 
             navigator.mediaDevices.addEventListener('devicechange', enumerateDevices);
@@ -864,3 +864,5 @@
     </script>
 </body>
 </html>
+
+```

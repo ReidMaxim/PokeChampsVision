@@ -71,20 +71,28 @@
 
         .log-entry {
             margin-bottom: 0.5rem;
-            color: #e2e8f0;
             word-wrap: break-word;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
         }
 
         .log-entry.action {
             color: #34d399;
+            background-color: rgba(52, 211, 153, 0.1);
         }
 
         .log-entry.status {
             color: #fbbf24;
+            background-color: rgba(251, 191, 36, 0.1);
         }
 
         .log-entry.damage {
             color: #f87171;
+            background-color: rgba(248, 113, 113, 0.1);
+        }
+
+        .log-entry.system {
+            color: #94a3b8;
         }
 
         .btn-primary {
@@ -209,7 +217,7 @@
             <h1 class="text-4xl font-bold text-emerald-400 mb-2">
                 🎮 Pokémon Champions Live OCR Tracker
             </h1>
-            <p class="text-slate-400 text-sm">Clean Grayscale Stream Generator</p>
+            <p class="text-slate-400 text-sm">Smart-Filtered Battle Log Generator</p>
         </div>
 
         <!-- Main Grid Layout -->
@@ -295,8 +303,8 @@
                 <div>
                     <label class="control-label mb-2">🎯 Clean Battle Log</label>
                     <div id="battleLog" class="battle-log">
-                        <div class="log-entry" style="color: #94a3b8;">
-                            [System] Waiting for video input...
+                        <div class="log-entry system">
+                            [System] Waiting for battle input...
                         </div>
                     </div>
                 </div>
@@ -359,9 +367,9 @@
                     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\' '
                 });
 
-                updateOcrStatus('✓ Tesseract ready (Clean Grayscale)', true);
+                updateOcrStatus('✓ Tesseract ready (Filtered Mode)', true);
                 elements.startTrackerBtn.disabled = false;
-                logMessage('[System] OCR engine initialized successfully', 'status');
+                logMessage('[System] OCR engine initialized successfully', 'system');
             } catch (error) {
                 console.error('Tesseract initialization failed:', error);
                 updateOcrStatus('✗ Initialization failed', false);
@@ -401,7 +409,7 @@
                     elements.deviceSelect.value = videoDevices[0].deviceId;
                 }
 
-                logMessage(`[System] Found ${videoDevices.length} video device(s)`, 'status');
+                logMessage(`[System] Found ${videoDevices.length} video device(s)`, 'system');
             } catch (error) {
                 logMessage(`[Error] Device error: ${error.message}`, 'damage');
             }
@@ -432,7 +440,7 @@
                 elements.stopCaptureBtn.disabled = false;
                 elements.deviceSelect.disabled = true;
 
-                logMessage('[System] Video capture started', 'status');
+                logMessage('[System] Video capture started', 'system');
                 
                 updateCanvasSize();
                 setTimeout(updateCanvasSize, 500);
@@ -453,7 +461,7 @@
             elements.deviceSelect.disabled = false;
             elements.videoPreview.srcObject = null;
             elements.roiBox.style.display = 'none';
-            logMessage('[System] Video capture stopped', 'status');
+            logMessage('[System] Video capture stopped', 'system');
         }
 
         function updateCanvasSize() {
@@ -499,6 +507,26 @@
             ctx.setLineDash([]);
         }
 
+        function isValidBattleLine(text) {
+            const lower = text.toLowerCase();
+            const battleKeywords = [
+                'used', 'fainted', 'go!', 'evolved', 'sent out', 
+                'effective', 'missed', 'critical', 'fell', 'rose', 
+                'sp. atk', 'sp. def', 'attack', 'defense', 'speed',
+                'hp', 'item', 'ability', 'terastallized'
+            ];
+            const hasKeyword = battleKeywords.some(keyword => lower.includes(keyword));
+            const hasGoodLength = text.length >= 8;
+            return hasKeyword && hasGoodLength;
+        }
+
+        function getLogType(text) {
+            const lower = text.toLowerCase();
+            if (lower.includes('fainted')) return 'damage';
+            if (lower.includes('go!') || lower.includes('sent out') || lower.includes('evolved')) return 'status';
+            return 'action';
+        }
+
         async function processOcrTick() {
             if (!state.isCapturing || elements.videoPreview.readyState < 2 || state.isProcessingOcr) {
                 return;
@@ -525,7 +553,6 @@
                 tempCanvas.height = roiHeight;
 
                 const ctx = tempCanvas.getContext('2d');
-                // Pass clean crop directly without binarization noise
                 ctx.drawImage(elements.videoPreview, roiX, roiY, roiWidth, roiHeight, 0, 0, roiWidth, roiHeight);
 
                 const result = await state.tesseractWorker.recognize(tempCanvas.toDataURL('image/png'));
@@ -539,16 +566,19 @@
 
                 const validLines = rawText.split('\n')
                     .map(l => l.trim())
-                    .filter(l => l.length >= 3 && /[a-zA-Z]{3,}/.test(l));
+                    .filter(l => l.length >= 3);
 
                 if (validLines.length > 0) {
                     let currentSentence = validLines.join(' ');
                     const now = Date.now();
 
-                    if (currentSentence !== state.lastCommittedText && (now - state.lastCommitTime > 2000)) {
-                        state.lastCommittedText = currentSentence;
-                        state.lastCommitTime = now;
-                        logMessage(`[Action] ${currentSentence}`, 'action');
+                    // Only log if it passes strict battle grammar check and cooldown
+                    if (isValidBattleLine(currentSentence)) {
+                        if (currentSentence !== state.lastCommittedText && (now - state.lastCommitTime > 2000)) {
+                            state.lastCommittedText = currentSentence;
+                            state.lastCommitTime = now;
+                            logMessage(currentSentence, getLogType(currentSentence));
+                        }
                     }
                 }
             } catch (error) {
@@ -565,7 +595,7 @@
             elements.stopTrackerBtn.style.display = 'block';
             elements.startTrackerBtn.disabled = true;
             elements.stopTrackerBtn.disabled = false;
-            logMessage('[System] Clean grayscale tracker started (0.3s interval)', 'status');
+            logMessage('[System] Filtered battle tracker started (0.3s interval)', 'system');
 
             state.trackingInterval = setInterval(processOcrTick, 300);
         }
@@ -580,7 +610,7 @@
             elements.stopTrackerBtn.style.display = 'none';
             elements.startTrackerBtn.disabled = false;
             elements.stopTrackerBtn.disabled = true;
-            logMessage('[System] Auto-tracker stopped', 'status');
+            logMessage('[System] Auto-tracker stopped', 'system');
         }
 
         function setupRoiControls() {
@@ -625,10 +655,10 @@
             elements.stopTrackerBtn.addEventListener('click', stopTracking);
             elements.copyLogBtn.addEventListener('click', () => {
                 navigator.clipboard.writeText(state.logEntries.join('\n'));
-                logMessage('[System] Log copied to clipboard!', 'status');
+                logMessage('[System] Log copied to clipboard!', 'system');
             });
             elements.clearLogBtn.addEventListener('click', () => {
-                elements.battleLog.innerHTML = '<div class="log-entry" style="color: #94a3b8;">[System] Log cleared</div>';
+                elements.battleLog.innerHTML = '<div class="log-entry system">[System] Log cleared</div>';
                 state.logEntries = [];
                 state.lastCommittedText = '';
             });

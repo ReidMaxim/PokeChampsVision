@@ -209,7 +209,7 @@
             <h1 class="text-4xl font-bold text-emerald-400 mb-2">
                 🎮 Pokémon Champions Live OCR Tracker
             </h1>
-            <p class="text-slate-400 text-sm">Instant-Stream Battle Log Generator</p>
+            <p class="text-slate-400 text-sm">Clean Grayscale Stream Generator</p>
         </div>
 
         <!-- Main Grid Layout -->
@@ -359,7 +359,7 @@
                     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\' '
                 });
 
-                updateOcrStatus('✓ Tesseract ready (Instant Mode)', true);
+                updateOcrStatus('✓ Tesseract ready (Clean Grayscale)', true);
                 elements.startTrackerBtn.disabled = false;
                 logMessage('[System] OCR engine initialized successfully', 'status');
             } catch (error) {
@@ -525,19 +525,8 @@
                 tempCanvas.height = roiHeight;
 
                 const ctx = tempCanvas.getContext('2d');
+                // Pass clean crop directly without binarization noise
                 ctx.drawImage(elements.videoPreview, roiX, roiY, roiWidth, roiHeight, 0, 0, roiWidth, roiHeight);
-
-                // High-contrast binarization
-                let imgData = ctx.getImageData(0, 0, roiWidth, roiHeight);
-                let data = imgData.data;
-                for (let i = 0; i < data.length; i += 4) {
-                    let avg = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-                    let enhanced = avg > 140 ? 255 : 0;
-                    data[i] = enhanced;
-                    data[i + 1] = enhanced;
-                    data[i + 2] = enhanced;
-                }
-                ctx.putImageData(imgData, 0, 0);
 
                 const result = await state.tesseractWorker.recognize(tempCanvas.toDataURL('image/png'));
                 let rawText = result.data.text.trim();
@@ -548,16 +537,14 @@
                     elements.debugLog.innerHTML = `[Raw] (Empty/No text detected)`;
                 }
 
-                // Clean and filter valid words
                 const validLines = rawText.split('\n')
                     .map(l => l.trim())
-                    .filter(l => l.length >= 2 && /[a-zA-Z]{2,}/.test(l));
+                    .filter(l => l.length >= 3 && /[a-zA-Z]{3,}/.test(l));
 
                 if (validLines.length > 0) {
                     let currentSentence = validLines.join(' ');
                     const now = Date.now();
 
-                    // Instant log if it's new text and at least 2 seconds have passed since the last log
                     if (currentSentence !== state.lastCommittedText && (now - state.lastCommitTime > 2000)) {
                         state.lastCommittedText = currentSentence;
                         state.lastCommitTime = now;
@@ -578,7 +565,7 @@
             elements.stopTrackerBtn.style.display = 'block';
             elements.startTrackerBtn.disabled = true;
             elements.stopTrackerBtn.disabled = false;
-            logMessage('[System] Instant-stream tracker started (0.3s interval)', 'status');
+            logMessage('[System] Clean grayscale tracker started (0.3s interval)', 'status');
 
             state.trackingInterval = setInterval(processOcrTick, 300);
         }

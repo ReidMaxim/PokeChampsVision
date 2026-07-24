@@ -19,10 +19,12 @@
             border: 2px solid #475569;
             border-radius: 0.5rem;
             overflow: hidden;
+            min-height: 240px;
         }
 
         #videoPreview {
             width: 100%;
+            height: auto;
             display: block;
             background-color: #000;
         }
@@ -31,14 +33,16 @@
             position: absolute;
             top: 0;
             left: 0;
-            cursor: crosshair;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
         }
 
         .roi-box {
             position: absolute;
             border: 3px dashed #10b981;
             background-color: rgba(16, 185, 129, 0.1);
-            cursor: move;
+            pointer-events: none;
         }
 
         .battle-log {
@@ -336,7 +340,6 @@
                 updateOcrStatus('Initializing Tesseract engine...', false);
                 state.tesseractWorker = await Tesseract.createWorker('eng');
                 
-                // Set parameters to optimize alphanumeric recognition and text lines
                 await state.tesseractWorker.setParameters({
                     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\' '
                 });
@@ -398,13 +401,19 @@
                 });
 
                 elements.videoPreview.srcObject = state.videoStream;
+                
+                // Force play to ensure frames stream immediately
+                await elements.videoPreview.play().catch(e => console.log("Auto-play prevented/handled:", e));
+
                 state.isCapturing = true;
                 elements.startCaptureBtn.disabled = true;
                 elements.stopCaptureBtn.disabled = false;
                 elements.deviceSelect.disabled = true;
 
                 logMessage('[System] Video capture started', 'status');
-                elements.videoPreview.onloadedmetadata = () => updateCanvasSize();
+                
+                // Explicitly update canvas size once dimensions are active
+                setTimeout(updateCanvasSize, 300);
             } catch (error) {
                 logMessage(`[Error] Capture failed: ${error.message}`, 'damage');
             }
@@ -421,18 +430,25 @@
             elements.stopCaptureBtn.disabled = true;
             elements.deviceSelect.disabled = false;
             elements.videoPreview.srcObject = null;
+            elements.roiBox.style.display = 'none';
             logMessage('[System] Video capture stopped', 'status');
         }
 
         function updateCanvasSize() {
-            const rect = elements.videoContainer.getBoundingClientRect();
+            const container = document.getElementById('videoContainer');
+            const rect = container.getBoundingClientRect();
+            
+            if (rect.width === 0) return;
+
             elements.cropCanvas.width = rect.width;
-            elements.cropCanvas.height = rect.height;
+            elements.cropCanvas.height = elements.videoPreview.offsetHeight || rect.height;
             updateRoiBox();
         }
 
         function updateRoiBox() {
-            const rect = elements.videoContainer.getBoundingClientRect();
+            const rect = elements.cropCanvas;
+            if (rect.width === 0) return;
+
             const x = state.roi.x * rect.width;
             const y = state.roi.y * rect.height;
             const width = state.roi.width * rect.width;
@@ -445,9 +461,9 @@
             elements.roiBox.style.display = 'block';
 
             const ctx = elements.cropCanvas.getContext('2d');
-            ctx.clearRect(0, 0, elements.cropCanvas.width, elements.cropCanvas.height);
+            ctx.clearRect(0, 0, rect.width, rect.height);
             ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-            ctx.fillRect(0, 0, elements.cropCanvas.width, elements.cropCanvas.height);
+            ctx.fillRect(0, 0, rect.width, rect.height);
             ctx.clearRect(x, y, width, height);
             ctx.strokeStyle = '#10b981';
             ctx.lineWidth = 3;
@@ -456,9 +472,8 @@
             ctx.setLineDash([]);
         }
 
-        // STABILITY-VERIFIED OCR PROCESSING LOOP
         async function processOcrTick() {
-            if (!state.isCapturing || elements.videoPreview.readyState !== elements.videoPreview.HAVE_ENOUGH_DATA) {
+            if (!state.isCapturing || elements.videoPreview.readyState < 2) {
                 return;
             }
 
@@ -466,6 +481,8 @@
                 const tempCanvas = document.createElement('canvas');
                 const videoWidth = elements.videoPreview.videoWidth;
                 const videoHeight = elements.videoPreview.videoHeight;
+
+                if (!videoWidth || !videoHeight) return;
 
                 const roiX = state.roi.x * videoWidth;
                 const roiY = state.roi.y * videoHeight;
@@ -478,7 +495,6 @@
                 const ctx = tempCanvas.getContext('2d');
                 ctx.drawImage(elements.videoPreview, roiX, roiY, roiWidth, roiHeight, 0, 0, roiWidth, roiHeight);
 
-                // High-Contrast Black & White Filter
                 let imgData = ctx.getImageData(0, 0, roiWidth, roiHeight);
                 let data = imgData.data;
                 for (let i = 0; i < data.length; i += 4) {
@@ -493,7 +509,6 @@
                 const result = await state.tesseractWorker.recognize(tempCanvas.toDataURL('image/png'));
                 let rawText = result.data.text.trim();
 
-                // Clean and filter lines via Strict Regex Guardrails
                 const validLines = rawText.split('\n')
                     .map(l => l.trim())
                     .filter(l => l.length >= 4 && /[a-zA-Z]{3,}/.test(l) && !/[|\\=_]{2,}/.test(l));
@@ -501,10 +516,8 @@
                 if (validLines.length > 0) {
                     let currentSentence = validLines.join(' ');
 
-                    // Stability Verification: Must match the previous read consecutively to pass
                     if (currentSentence === state.lastRawText) {
                         state.consecutiveMatches++;
-                        // If stable for 2 cycles and not a duplicate of the last logged line
                         if (state.consecutiveMatches === 2 && currentSentence !== state.committedText) {
                             state.committedText = currentSentence;
                             logMessage(`[Action] ${currentSentence}`, 'action');
@@ -520,15 +533,14 @@
         }
 
         function startTracking() {
-            if (!state.tesseractWorker) return;
+            if (!state.tesseractWorker || !state.isCapturing) return;
             state.isTracking = true;
             elements.startTrackerBtn.style.display = 'none';
             elements.stopTrackerBtn.style.display = 'block';
             elements.startTrackerBtn.disabled = true;
             elements.stopTrackerBtn.disabled = false;
-            logMessage('[System] Stability auto-tracker started', 'status');
+            logMessage('[System] Auto-tracker started (1.0s interval)', 'status');
 
-            // Run verification scan every 1 second
             state.trackingInterval = setInterval(processOcrTick, 1000);
         }
 
@@ -595,6 +607,7 @@
                 state.committedText = '';
             });
             window.addEventListener('resize', updateCanvasSize);
+            elements.videoPreview.addEventListener('loadedmetadata', updateCanvasSize);
         }
 
         async function initialize() {

@@ -217,7 +217,7 @@
             <h1 class="text-4xl font-bold text-emerald-400 mb-2">
                 🎮 Pokémon Champions Live OCR Tracker
             </h1>
-            <p class="text-slate-400 text-sm">2x High-Resolution Upscaled OCR Engine</p>
+            <p class="text-slate-400 text-sm">Clean Filtered OCR Engine</p>
         </div>
 
         <!-- Main Grid Layout -->
@@ -367,7 +367,7 @@
                     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\' '
                 });
 
-                updateOcrStatus('✓ Tesseract ready (2x Upscale Mode)', true);
+                updateOcrStatus('✓ Tesseract ready (Clean Filter Mode)', true);
                 elements.startTrackerBtn.disabled = false;
                 logMessage('[System] OCR engine initialized successfully', 'system');
             } catch (error) {
@@ -509,14 +509,35 @@
 
         function isValidBattleLine(text) {
             const lower = text.toLowerCase();
+
+            // 1. Immediately drop UI artifacts, buttons, and watermarks
+            const uiArtifacts = [
+                'battle info', 'move info', 'hide summary', 'close', 
+                'summary', 'movetime', 'sikyostrich', 'sikyoutich', 'normal', 'psychic'
+            ];
+            if (uiArtifacts.some(art => lower.includes(art))) {
+                return false;
+            }
+
+            // 2. Ensure text has a healthy ratio of actual letters (blocks garbage hex/numbers)
+            const alphaChars = text.replace(/[^a-zA-Z]/g, '').length;
+            if (alphaChars < 5 || (alphaChars / text.length < 0.45)) {
+                return false;
+            }
+
+            // 3. Match legitimate VGC battle actions and keywords
             const battleKeywords = [
                 'used', 'fainted', 'go!', 'evolved', 'sent out', 
                 'effective', 'missed', 'critical', 'fell', 'rose', 
                 'sp. atk', 'sp. def', 'attack', 'defense', 'speed',
-                'hp', 'item', 'ability', 'terastallized', 'mega'
+                'hp', 'item', 'ability', 'terastallized', 'mega', 
+                'blizzard', 'scald', 'hyper', 'giga', 'drain', 
+                'flamethrower', 'rage', 'powder', 'volt', 'tackle',
+                'trick room', 'twin beam', 'parting shot', 'fake out'
             ];
             const hasKeyword = battleKeywords.some(keyword => lower.includes(keyword));
             const hasGoodLength = text.length >= 6;
+            
             return hasKeyword && hasGoodLength;
         }
 
@@ -549,7 +570,6 @@
                 const roiWidth = state.roi.width * videoWidth;
                 const roiHeight = state.roi.height * videoHeight;
 
-                // 2X Upscale multiplier for crystal-clear character recognition
                 const scale = 2;
                 tempCanvas.width = roiWidth * scale;
                 tempCanvas.height = roiHeight * scale;
@@ -558,7 +578,6 @@
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = 'high';
                 
-                // Draw upscaled crop directly from video stream
                 ctx.drawImage(
                     elements.videoPreview, 
                     roiX, roiY, roiWidth, roiHeight, 
@@ -604,7 +623,7 @@
             elements.stopTrackerBtn.style.display = 'block';
             elements.startTrackerBtn.disabled = true;
             elements.stopTrackerBtn.disabled = false;
-            logMessage('[System] 2x Upscaled tracker started (0.3s interval)', 'system');
+            logMessage('[System] Filtered OCR tracker started (0.3s interval)', 'system');
 
             state.trackingInterval = setInterval(processOcrTick, 300);
         }

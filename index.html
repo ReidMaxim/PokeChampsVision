@@ -1,676 +1,509 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pokémon Champions Modular Replay Parser & Battle Tracker</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/tesseract.js@v6.0.0/dist/tesseract.min.js"></script>
-    <style>
-        body {
-            background-color: #0b0f19;
-            color: #e2e8f0;
-        }
-        .video-container {
-            position: relative;
-            width: 100%;
-            background-color: #1e293b;
-            border: 2px solid #334155;
-            border-radius: 0.75rem;
-            overflow: hidden;
-        }
-        #videoPreview {
-            width: 100%;
-            height: auto;
-            display: block;
-            background-color: #000;
-        }
-        #cropCanvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 10;
-        }
-        .roi-box {
-            position: absolute;
-            border: 3px dashed #38bdf8;
-            background-color: rgba(56, 189, 248, 0.1);
-            pointer-events: none;
-            z-index: 20;
-            display: block;
-        }
-        .panel {
-            background-color: #111827;
-            border: 1px solid #1f2937;
-            border-radius: 0.75rem;
-            padding: 1.25rem;
-        }
-        .battle-log {
-            height: 500px;
-            overflow-y: auto;
-            background-color: #0d1322;
-            border: 1px solid #1e293b;
-            border-radius: 0.5rem;
-            padding: 1rem;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            font-size: 0.875rem;
-        }
-        .debug-log {
-            height: 100px;
-            overflow-y: auto;
-            background-color: #030712;
-            color: #6b7280;
-            font-family: monospace;
-            font-size: 0.75rem;
-            border: 1px solid #1f2937;
-            border-radius: 0.5rem;
-            padding: 0.75rem;
-        }
-        .turn-header {
-            font-weight: bold;
-            color: #38bdf8;
-            border-bottom: 1px solid #1e293b;
-            padding-bottom: 0.25rem;
-            margin-top: 1rem;
-            margin-bottom: 0.5rem;
-        }
-        .turn-header:first-child {
-            margin-top: 0;
-        }
-        .event-item {
-            margin-left: 1rem;
-            margin-bottom: 0.25rem;
-            color: #cbd5e1;
-        }
-        .event-item.move { color: #34d399; }
-        .event-item.move_failed { color: #f87171; text-decoration: line-through; }
-        .event-item.switch { color: #60a5fa; }
-        .event-item.mega { color: #f472b6; }
-        .event-item.ability { color: #fbbf24; }
-        .event-item.status { color: #facc15; }
-        .event-item.stat_change { color: #38bdf8; }
-        .event-item.field { color: #a78bfa; }
-        .event-item.faint { color: #ef4444; }
-        .event-item.battle_end { color: #a855f7; font-weight: bold; }
-        .btn-primary {
-            background-color: #0284c7;
-            color: white;
-            font-weight: 600;
-            padding: 0.625rem 1rem;
-            border-radius: 0.5rem;
-            transition: background 0.2s;
-        }
-        .btn-primary:hover { background-color: #0369a1; }
-        .btn-secondary {
-            background-color: #334155;
-            color: #e2e8f0;
-            font-weight: 600;
-            padding: 0.625rem 1rem;
-            border-radius: 0.5rem;
-            transition: background 0.2s;
-        }
-        .btn-secondary:hover { background-color: #475569; }
-    </style>
+  <meta charset="UTF-8">
+  <title>Pokémon Champions Battle Log Parser</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Tailwind CSS for styling (via CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Include tesseract-wasm (make sure to serve the WASM files from same origin) -->
+  <script src="https://unpkg.com/tesseract-wasm/dist/tesseract-wasm.js"></script>
+
+  <!-- Include fuzzy string libraries if desired (or implement our own) -->
+  <!-- Example: Fuse.js or similar could help; here we'll implement basic Levenshtein/JW in JS -->
+
+  <style>
+    body { background-color: #0b0f19; color: #e2e8f0; font-family: sans-serif; }
+    .panel { background-color: #111827; border: 1px solid #1f2937; border-radius: 0.75rem; padding: 1rem; }
+    .battle-log { height: 400px; overflow-y: auto; background-color: #0d1322; border: 1px solid #1e293b; border-radius: 0.5rem; padding: 1rem; font-family: monospace; font-size: 0.875rem; }
+    .debug-log { height: 100px; overflow-y: auto; background: #030712; color: #6b7280; font-family: monospace; font-size: 0.75rem; border:1px solid #1f2937; border-radius:0.5rem; padding:0.75rem; }
+    .turn-header { font-weight: bold; color: #38bdf8; margin-top: 1rem; margin-bottom: 0.5rem; border-bottom: 1px solid #1e293b; padding-bottom: 0.25rem; }
+    .event-item { margin-left: 1rem; margin-bottom: 0.25rem; color: #cbd5e1; }
+    .event-item.move { color: #34d399; }
+    .event-item.faint { color: #ef4444; }
+    /* ... (other color classes) ... */
+    #videoPreview { width: 100%; background: #000; }
+    #cropCanvas { display: none; }
+    #roiBox { position: absolute; border: 2px dashed #38bdf8; background: rgba(56,189,248,0.2); }
+  </style>
 </head>
 <body class="p-6">
-    <div class="max-w-7xl mx-auto space-y-6">
-        <!-- Header -->
-        <div class="flex justify-between items-center">
-            <div>
-                <h1 class="text-3xl font-extrabold text-sky-400">Pokémon Champions Replay Parser</h1>
-                <p class="text-slate-400 text-sm">Modular Event Pipeline & Advanced OCR State Tracker</p>
-            </div>
-            <div id="ocrStatusBadge" class="px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-semibold">
-                Initializing OCR...
-            </div>
-        </div>
+  <div class="max-w-4xl mx-auto space-y-6">
 
-        <!-- Main Grid -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <!-- Left Column: Video & Configuration -->
-            <div class="space-y-6 lg:col-span-1">
-                <div class="panel space-y-4">
-                    <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400">1. Video Capture Source</h2>
-                    <select id="deviceSelect" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200">
-                        <option value="">-- Select Capture Device --</option>
-                    </select>
-                    <div class="flex gap-2">
-                        <button id="startCaptureBtn" class="btn-primary flex-1 text-sm">Start Capture</button>
-                        <button id="stopCaptureBtn" class="btn-secondary flex-1 text-sm" disabled>Stop</button>
-                    </div>
-                </div>
-
-                <!-- Video Preview Box -->
-                <div class="video-container" id="videoContainer">
-                    <video id="videoPreview" autoplay muted playsinline></video>
-                    <canvas id="cropCanvas"></canvas>
-                    <div id="roiBox" class="roi-box"></div>
-                </div>
-
-                <!-- ROI & Engine Controls -->
-                <div class="panel space-y-4">
-                    <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400">2. Textbox ROI (Priority Area)</h2>
-                    <div class="grid grid-cols-2 gap-3 text-xs">
-                        <div>
-                            <label class="text-slate-400 block mb-1">X Offset: <span id="valX">0</span>%</label>
-                            <input type="range" id="roiX" min="0" max="100" value="0" class="w-full">
-                        </div>
-                        <div>
-                            <label class="text-slate-400 block mb-1">Y Offset: <span id="valY">75</span>%</label>
-                            <input type="range" id="roiY" min="0" max="100" value="75" class="w-full">
-                        </div>
-                        <div>
-                            <label class="text-slate-400 block mb-1">Width: <span id="valW">100</span>%</label>
-                            <input type="range" id="roiWidth" min="20" max="100" value="100" class="w-full">
-                        </div>
-                        <div>
-                            <label class="text-slate-400 block mb-1">Height: <span id="valH">25</span>%</label>
-                            <input type="range" id="roiHeight" min="10" max="50" value="25" class="w-full">
-                        </div>
-                    </div>
-                    <button id="toggleParserBtn" class="w-full btn-primary opacity-50 cursor-not-allowed" disabled>
-                        Start Battle Parser
-                    </button>
-                </div>
-            </div>
-
-            <!-- Right Column: Live State & Replay Log -->
-            <div class="space-y-6 lg:col-span-2">
-                <!-- Battle State Overview -->
-                <div class="panel space-y-3">
-                    <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400">Live Battle State</h2>
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                        <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-                            <span class="text-slate-500 block">Current Turn</span>
-                            <span id="stateTurn" class="text-lg font-bold text-sky-400">1</span>
-                        </div>
-                        <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-                            <span class="text-slate-500 block">Weather / Terrain</span>
-                            <span id="stateField" class="font-medium text-slate-200">None</span>
-                        </div>
-                        <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-                            <span class="text-slate-500 block">Trick Room</span>
-                            <span id="stateTrickRoom" class="font-medium text-slate-200">Inactive</span>
-                        </div>
-                        <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-                            <span class="text-slate-500 block">Active Team Members</span>
-                            <span id="stateTeam" class="font-medium text-slate-200 truncate block">Tracking...</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Showdown-Style Replay Log -->
-                <div class="panel space-y-3">
-                    <div class="flex justify-between items-center">
-                        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400">Structured Replay Log</h2>
-                        <div class="flex gap-2">
-                            <button id="copyLogBtn" class="btn-secondary text-xs py-1.5 px-3">Copy Replay</button>
-                            <button id="clearLogBtn" class="btn-secondary text-xs py-1.5 px-3">Clear</button>
-                        </div>
-                    </div>
-                    <div id="battleLog" class="battle-log space-y-2">
-                        <div class="text-slate-500 italic">[System] Waiting for battle start...</div>
-                    </div>
-                </div>
-
-                <!-- Raw Debug Output -->
-                <div>
-                    <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">OCR Difference & Raw Output</label>
-                    <div id="debugLog" class="debug-log">
-                        [Debug] Awaiting OCR frames...
-                    </div>
-                </div>
-            </div>
-        </div>
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+      <h1 class="text-3xl font-bold text-sky-400">Pokémon Champions Battle Parser</h1>
+      <span id="ocrStatusBadge" class="px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-semibold">Initializing OCR...</span>
     </div>
 
-    <script>
-        const state = {
-            videoStream: null,
-            worker: null,
-            isCapturing: false,
-            isParsing: false,
-            parseInterval: null,
-            lastAcceptedLine: '',
-            lastAcceptedTime: 0,
-            battle: {
-                turn: 1,
-                weather: 'None',
-                terrain: 'None',
-                trickRoom: false,
-                activePokemon: new Set(),
-                faintedPokemon: new Set(),
-                turnsData: {}
-            },
-            roi: { x: 0, y: 0.75, width: 1.0, height: 0.25 }
-        };
+    <!-- Controls Panel -->
+    <div class="panel space-y-4">
+      <div>
+        <label class="block text-slate-400 mb-1">Video Capture Device</label>
+        <select id="deviceSelect" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200">
+          <option value="">-- Select Device --</option>
+        </select>
+      </div>
+      <div class="flex gap-2">
+        <button id="startCaptureBtn" class="btn-primary flex-1">Start Capture</button>
+        <button id="stopCaptureBtn" class="btn-secondary flex-1" disabled>Stop</button>
+      </div>
+      <div>
+        <button id="startParserBtn" class="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed" disabled>Start Battle Parser</button>
+      </div>
+    </div>
 
-        const elements = {
-            deviceSelect: document.getElementById('deviceSelect'),
-            videoPreview: document.getElementById('videoPreview'),
-            cropCanvas: document.getElementById('cropCanvas'),
-            roiBox: document.getElementById('roiBox'),
-            startCaptureBtn: document.getElementById('startCaptureBtn'),
-            stopCaptureBtn: document.getElementById('stopCaptureBtn'),
-            toggleParserBtn: document.getElementById('toggleParserBtn'),
-            battleLog: document.getElementById('battleLog'),
-            debugLog: document.getElementById('debugLog'),
-            copyLogBtn: document.getElementById('copyLogBtn'),
-            clearLogBtn: document.getElementById('clearLogBtn'),
-            ocrStatusBadge: document.getElementById('ocrStatusBadge'),
-            stateTurn: document.getElementById('stateTurn'),
-            stateField: document.getElementById('stateField'),
-            stateTrickRoom: document.getElementById('stateTrickRoom'),
-            stateTeam: document.getElementById('stateTeam'),
-            roiX: document.getElementById('roiX'),
-            roiY: document.getElementById('roiY'),
-            roiWidth: document.getElementById('roiWidth'),
-            roiHeight: document.getElementById('roiHeight')
-        };
+    <!-- Video & ROI -->
+    <div class="relative border border-slate-700">
+      <video id="videoPreview" autoplay muted playsinline></video>
+      <canvas id="cropCanvas"></canvas>
+      <div id="roiBox" class="hidden"></div>
+    </div>
 
-        async function initTesseract() {
-            try {
-                elements.ocrStatusBadge.textContent = 'Loading Tesseract...';
-                state.worker = await Tesseract.createWorker('eng');
-                await state.worker.setParameters({
-                    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?-\' '
-                });
-                elements.ocrStatusBadge.textContent = 'OCR Engine Ready';
-                elements.ocrStatusBadge.className = 'px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-semibold';
-                elements.toggleParserBtn.disabled = false;
-                elements.toggleParserBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-            } catch (err) {
-                elements.ocrStatusBadge.textContent = 'OCR Error';
-                elements.ocrStatusBadge.className = 'px-3 py-1 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 text-xs font-semibold';
-            }
-        }
+    <!-- ROI Sliders -->
+    <div class="panel grid grid-cols-2 gap-4 text-xs">
+      <div>
+        <label class="text-slate-400 mb-1">ROI X: <span id="valX">0</span>%</label>
+        <input type="range" id="roiX" min="0" max="100" value="0" class="w-full">
+      </div>
+      <div>
+        <label class="text-slate-400 mb-1">ROI Y: <span id="valY">75</span>%</label>
+        <input type="range" id="roiY" min="0" max="100" value="75" class="w-full">
+      </div>
+      <div>
+        <label class="text-slate-400 mb-1">ROI Width: <span id="valW">100</span>%</label>
+        <input type="range" id="roiWidth" min="20" max="100" value="100" class="w-full">
+      </div>
+      <div>
+        <label class="text-slate-400 mb-1">ROI Height: <span id="valH">25</span>%</label>
+        <input type="range" id="roiHeight" min="5" max="50" value="25" class="w-full">
+      </div>
+    </div>
 
-        async function enumerateDevices() {
-            try {
-                const temp = await navigator.mediaDevices.getUserMedia({ video: true });
-                temp.getTracks().forEach(t => t.stop());
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoDevices = devices.filter(d => d.kind === 'videoinput');
-                elements.deviceSelect.innerHTML = '<option value="">-- Select Capture Device --</option>';
-                videoDevices.forEach(d => {
-                    const opt = document.createElement('option');
-                    opt.value = d.deviceId;
-                    opt.textContent = d.label || `Capture Device ${d.deviceId.substring(0, 5)}`;
-                    elements.deviceSelect.appendChild(opt);
-                });
-                if (videoDevices.length > 0) elements.deviceSelect.value = videoDevices[0].deviceId;
-            } catch (e) {
-                console.error(e);
-            }
-        }
+    <!-- Live State & Log -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="panel space-y-3">
+        <h2 class="text-sm font-bold uppercase text-slate-400">Live Battle State</h2>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+            <span class="text-slate-500 block">Turn</span>
+            <span id="stateTurn" class="text-lg font-bold text-sky-400">1</span>
+          </div>
+          <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+            <span class="text-slate-500 block">Field</span>
+            <span id="stateField" class="text-slate-200">None</span>
+          </div>
+          <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+            <span class="text-slate-500 block">Trick Room</span>
+            <span id="stateTrick" class="text-slate-200">Inactive</span>
+          </div>
+          <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+            <span class="text-slate-500 block">Active Pokémon</span>
+            <span id="stateTeam" class="text-slate-200 truncate">None</span>
+          </div>
+        </div>
+      </div>
 
-        async function startCapture() {
-            const deviceId = elements.deviceSelect.value;
-            if (!deviceId) return;
-            try {
-                state.videoStream = await navigator.mediaDevices.getUserMedia({
-                    video: { deviceId: { exact: deviceId } },
-                    audio: false
-                });
-                elements.videoPreview.srcObject = state.videoStream;
-                await elements.videoPreview.play();
-                state.isCapturing = true;
-                elements.startCaptureBtn.disabled = true;
-                elements.stopCaptureBtn.disabled = false;
-                elements.deviceSelect.disabled = true;
-                updateCanvas();
-            } catch (e) {
-                console.error(e);
-            }
-        }
+      <div class="panel space-y-3">
+        <h2 class="text-sm font-bold uppercase text-slate-400">Replay Log</h2>
+        <div class="flex gap-2">
+          <button id="copyLogBtn" class="btn-secondary text-xs px-3 py-1.5">Copy</button>
+          <button id="clearLogBtn" class="btn-secondary text-xs px-3 py-1.5">Clear</button>
+        </div>
+        <div id="battleLog" class="battle-log">
+          <div class="text-slate-500 italic">[System] Awaiting battle data...</div>
+        </div>
+      </div>
+    </div>
 
-        function stopCapture() {
-            if (state.videoStream) {
-                state.videoStream.getTracks().forEach(t => t.stop());
-                state.videoStream = null;
-            }
-            stopParser();
-            state.isCapturing = false;
-            elements.startCaptureBtn.disabled = false;
-            elements.stopCaptureBtn.disabled = true;
-            elements.deviceSelect.disabled = false;
-            elements.videoPreview.srcObject = null;
-            elements.roiBox.style.display = 'none';
-        }
+    <!-- Debug output -->
+    <div class="panel space-y-1">
+      <label class="uppercase text-xs text-slate-500">Debug Info</label>
+      <div id="debugLog" class="debug-log">[Debug] No OCR data yet.</div>
+    </div>
+  </div>
 
-        function updateCanvas() {
-            const v = elements.videoPreview;
-            if (!v.videoWidth) return;
-            const w = v.clientWidth;
-            const h = v.clientHeight;
-            elements.cropCanvas.width = w;
-            elements.cropCanvas.height = h;
-            updateRoiOverlay();
-        }
+  <script>
+    // State and globals
+    let videoStream = null;
+    let ocrClient = null;
+    let parsing = false;
+    let lastOCRText = "";
+    let lastOCRTime = 0;
+    const ocrDebounce = 1000; // 1 second
+    const state = {
+      turn: 1,
+      field: 'None',
+      trickRoom: false,
+      activePokemon: new Set(),
+      turns: {}
+    };
 
-        function updateRoiOverlay() {
-            const w = elements.cropCanvas.width;
-            const h = elements.cropCanvas.height;
-            if (!w || !h) return;
-            const x = state.roi.x * w;
-            const y = state.roi.y * h;
-            const bw = state.roi.width * w;
-            const bh = state.roi.height * h;
+    // Elements
+    const deviceSelect = document.getElementById('deviceSelect');
+    const startCaptureBtn = document.getElementById('startCaptureBtn');
+    const stopCaptureBtn = document.getElementById('stopCaptureBtn');
+    const startParserBtn = document.getElementById('startParserBtn');
+    const videoPreview = document.getElementById('videoPreview');
+    const cropCanvas = document.getElementById('cropCanvas');
+    const roiBox = document.getElementById('roiBox');
+    const stateTurn = document.getElementById('stateTurn');
+    const stateField = document.getElementById('stateField');
+    const stateTrick = document.getElementById('stateTrick');
+    const stateTeam = document.getElementById('stateTeam');
+    const battleLog = document.getElementById('battleLog');
+    const debugLog = document.getElementById('debugLog');
+    const copyLogBtn = document.getElementById('copyLogBtn');
+    const clearLogBtn = document.getElementById('clearLogBtn');
+    const roiX = document.getElementById('roiX');
+    const roiY = document.getElementById('roiY');
+    const roiWidth = document.getElementById('roiWidth');
+    const roiHeight = document.getElementById('roiHeight');
+    const valX = document.getElementById('valX');
+    const valY = document.getElementById('valY');
+    const valW = document.getElementById('valW');
+    const valH = document.getElementById('valH');
 
-            elements.roiBox.style.left = x + 'px';
-            elements.roiBox.style.top = y + 'px';
-            elements.roiBox.style.width = bw + 'px';
-            elements.roiBox.style.height = bh + 'px';
-            elements.roiBox.style.display = 'block';
-
-            const ctx = elements.cropCanvas.getContext('2d');
-            ctx.clearRect(0, 0, w, h);
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-            ctx.fillRect(0, 0, w, h);
-            ctx.clearRect(x, y, bw, bh);
-            ctx.strokeStyle = '#38bdf8';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x, y, bw, bh);
-        }
-
-        // Levenshtein Distance for Fuzzy Deduplication (1-2 char difference check)
-        function getLevenshteinDistance(a, b) {
-            const matrix = [];
-            for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-            for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-            for (let i = 1; i <= b.length; i++) {
-                for (let j = 1; j <= a.length; j++) {
-                    if (b.charAt(i - 1) === a.charAt(j - 1)) {
-                        matrix[i][j] = matrix[i - 1][j - 1];
-                    } else {
-                        matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1));
-                    }
-                }
-            }
-            return matrix[b.length][a.length];
-        }
-
-        // Pre-processing & Normalization Layer
-        function preprocessOcrText(rawText) {
-            if (!rawText) return null;
-            let lines = rawText.split('\n')
-                .map(l => l.trim().replace(/\s+/g, ' '))
-                .filter(l => l.length > 0);
-
-            if (lines.length === 0) return null;
-            let line = lines[0];
-
-            const uiNoise = ['battle info', 'move info', 'hide summary', 'close', 'movetime', 'normal', 'psychic'];
-            if (uiNoise.some(n => line.toLowerCase().includes(n))) return null;
-
-            // OCR Typo Cleanups
-            line = line.replace(/farigirat|fatigiraf|farigitaf/gi, 'Farigiraf');
-            line = line.replace(/aerodacty/gi, 'Aerodactyl');
-
-            const now = Date.now();
-            if (state.lastAcceptedLine) {
-                const dist = getLevenshteinDistance(line.toLowerCase(), state.lastAcceptedLine.toLowerCase());
-                if (dist <= 2 && (now - state.lastAcceptedTime < 2000)) {
-                    return null; 
-                }
-            }
-
-            state.lastAcceptedLine = line;
-            state.lastAcceptedTime = now;
-            return line;
-        }
-
-        // --- Modular Recognizers Pipeline ---
-        function parseLine(line) {
-            const lower = line.toLowerCase();
-            let event = { type: 'unknown', raw: line, timestamp: Date.now() };
-
-            // 1. Battle End / Forfeit Recognizer
-            if (lower.includes('forfeit') || lower.includes('defeated') || lower.includes('won the battle')) {
-                event.type = 'battle_end';
-                event.end_reason = lower.includes('forfeit') ? 'forfeit' : 'normal';
-                event.winner = lower.includes('defeated') || lower.includes('won') ? 'player' : 'opponent';
-                return event;
-            }
-
-            // 2. Lead Pokémon / Sent Out Recognizer
-            if (lower.includes('sent out') || lower.includes('go!')) {
-                event.type = 'pokemon_sent_out';
-                const match = line.match(/(?:sent out|go!)\s+([A-Za-z\s and]+)!?/i);
-                if (match) {
-                    event.pokemon = match[1].trim();
-                    event.pokemon.split(' and ').forEach(p => state.battle.activePokemon.add(p.trim()));
-                }
-                return event;
-            }
-
-            // 3. Ability Activation Recognizers (Unnerve, Intimidate, Speed Boost)
-            if (lower.includes('too nervous to eat berries')) {
-                event.type = 'ability_activated';
-                event.ability = 'Unnerve';
-                return event;
-            }
-            if (lower.includes('attack fell') && (lower.includes('aerodactyl') || lower.includes('blaziken'))) {
-                event.type = 'ability_activated';
-                event.ability = 'Intimidate';
-                event.stat_change = { stat: 'attack', change: -1, targets: ['Aerodactyl', 'Blaziken'] };
-                return event;
-            }
-            if (lower.includes('speed rose') && lower.includes('blaziken')) {
-                event.type = 'ability_activated';
-                event.ability = 'Speed Boost';
-                event.stat_change = { stat: 'speed', change: +1 };
-                return event;
-            }
-
-            // 4. Mega Evolution Recognizers
-            if (lower.includes('has mega evolved')) {
-                event.type = 'mega_evolved';
-                const match = line.match(/([A-Za-z\s]+)\s+has Mega Evolved/i);
-                if (match) event.pokemon = match[1].trim();
-                return event;
-            }
-            if (lower.includes('is reacting')) {
-                event.type = 'mega_evolution_started';
-                const match = line.match(/([A-Za-z\s]+)'s\s+[A-Za-z0-9]+\s+is reacting/i);
-                if (match) event.pokemon = match[1].trim();
-                return event;
-            }
-
-            // 5. Move Failure Recognizer (Must check before standard move usage)
-            if (lower.includes('cannot use')) {
-                event.type = 'move_failed';
-                const match = line.match(/([A-Za-z\s]+)\s+cannot use\s+([A-Za-z\s]+)!?/i);
-                if (match) {
-                    event.user = match[1].trim();
-                    event.move = match[2].trim();
-                    event.reason = 'cannot_use';
-                }
-                return event;
-            }
-
-            // 6. Standard Move Used Recognizer (Damaging & Status moves)
-            if (lower.includes(' used ')) {
-                event.type = 'move';
-                const match = line.match(/^([A-Za-z\s]+)\s+used\s+([A-Za-z\s]+)!?/i);
-                if (match) {
-                    event.user = match[1].trim();
-                    event.move = match[2].trim();
-                    state.battle.activePokemon.add(event.user);
-                }
-                return event;
-            }
-
-            // 7. Status & Flinch / Effect Recognizer
-            if (lower.includes('flinched')) {
-                event.type = 'status';
-                const match = line.match(/^([A-Za-z\s]+)\s+flinched/i);
-                if (match) event.target = match[1].trim();
-                event.effect = 'flinch';
-                return event;
-            }
-            if (lower.includes('paralyzed') || lower.includes('burned') || lower.includes('poisoned') || lower.includes('asleep')) {
-                event.type = 'status';
-                return event;
-            }
-
-            // 8. Field & Screen Effects Recognizer
-            if (lower.includes('twisted the dimensions')) {
-                event.type = 'field';
-                state.battle.trickRoom = !state.battle.trickRoom;
-                event.effect = 'Trick Room';
-                return event;
-            }
-            if (lower.includes('ready to help')) {
-                event.type = 'effect';
-                event.effect = 'Helping Hand';
-                return event;
-            }
-            if (lower.includes('light screen')) {
-                event.type = 'effect';
-                event.effect = 'Light Screen';
-                return event;
-            }
-
-            // 9. Stat Change Recognizer
-            if (lower.includes('rose') || lower.includes('fell') || lower.includes('maximized')) {
-                event.type = 'stat_change';
-                return event;
-            }
-
-            // 10. Faint Recognizer
-            if (lower.includes('fainted')) {
-                event.type = 'faint';
-                const match = line.match(/^([A-Za-z\s]+)\s+fainted/i);
-                if (match) {
-                    event.target = match[1].trim();
-                    state.battle.faintedPokemon.add(event.target);
-                }
-                return event;
-            }
-
-            return event;
-        }
-
-        // Render Showdown-Style Turn Log
-        function renderLog() {
-            const container = elements.battleLog;
-            container.innerHTML = '';
-            
-            for (let turn in state.battle.turnsData) {
-                const turnDiv = document.createElement('div');
-                const header = document.createElement('div');
-                header.className = 'turn-header';
-                header.textContent = `Turn ${turn}`;
-                turnDiv.appendChild(header);
-
-                state.battle.turnsData[turn].forEach(ev => {
-                    const item = document.createElement('div');
-                    item.className = `event-item ${ev.type}`;
-                    item.textContent = `• ${ev.raw}`;
-                    turnDiv.appendChild(item);
-                });
-                container.appendChild(turnDiv);
-            }
-            container.scrollTop = container.scrollHeight;
-
-            elements.stateTurn.textContent = state.battle.turn;
-            elements.stateField.textContent = state.battle.weather;
-            elements.stateTrickRoom.textContent = state.battle.trickRoom ? 'Active' : 'Inactive';
-            elements.stateTeam.textContent = Array.from(state.battle.activePokemon).join(', ') || 'None';
-        }
-
-        async function processOcrTick() {
-            if (!state.isCapturing || elements.videoPreview.readyState < 2) return;
-
-            const canvas = document.createElement('canvas');
-            const vw = elements.videoPreview.videoWidth;
-            const vh = elements.videoPreview.videoHeight;
-            const rx = state.roi.x * vw;
-            const ry = state.roi.y * vh;
-            const rw = state.roi.width * vw;
-            const rh = state.roi.height * vh;
-
-            canvas.width = rw * 2;
-            canvas.height = rh * 2;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(elements.videoPreview, rx, ry, rw, rh, 0, 0, rw * 2, rh * 2);
-
-            try {
-                const res = await state.worker.recognize(canvas.toDataURL('image/png'));
-                const rawText = res.data.text.trim();
-                if (!rawText) return;
-
-                elements.debugLog.textContent = `[Raw OCR] ${rawText.replace(/\n/g, ' | ')}`;
-
-                const cleanedLine = preprocessOcrText(rawText);
-                if (!cleanedLine) return;
-
-                const event = parseLine(cleanedLine);
-
-                const currentTurn = state.battle.turn;
-                if (!state.battle.turnsData[currentTurn]) {
-                    state.battle.turnsData[currentTurn] = [];
-                }
-                state.battle.turnsData[currentTurn].push(event);
-
-                renderLog();
-            } catch (err) {
-                console.error(err);
-            }
-        }
-
-        function startParser() {
-            if (!state.worker || !state.isCapturing) return;
-            state.isParsing = true;
-            elements.toggleParserBtn.textContent = 'Stop Battle Parser';
-            elements.toggleParserBtn.className = 'w-full bg-rose-600 hover:bg-rose-700 text-white font-semibold py-2.5 rounded-lg';
-            state.parseInterval = setInterval(processOcrTick, 350);
-        }
-
-        function stopParser() {
-            if (state.parseInterval) clearInterval(state.parseInterval);
-            state.isParsing = false;
-            elements.toggleParserBtn.textContent = 'Start Battle Parser';
-            elements.toggleParserBtn.className = 'w-full btn-primary';
-        }
-
-        elements.startCaptureBtn.addEventListener('click', startCapture);
-        elements.stopCaptureBtn.addEventListener('click', stopCapture);
-        elements.toggleParserBtn.addEventListener('click', () => {
-            if (state.isParsing) stopParser();
-            else startParser();
+    // Load device list
+    async function enumerateDevices() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({video:true});
+        stream.getTracks().forEach(t => t.stop());
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter(d => d.kind === 'videoinput');
+        deviceSelect.innerHTML = '<option value="">-- Select Device --</option>';
+        videoInputs.forEach((d, idx) => {
+          const opt = document.createElement('option');
+          opt.value = d.deviceId;
+          opt.textContent = d.label || `Camera ${idx+1}`;
+          deviceSelect.appendChild(opt);
         });
+        if(videoInputs[0]) deviceSelect.value = videoInputs[0].deviceId;
+      } catch(e) {
+        console.error(e);
+      }
+    }
 
-        ['X', 'Y', 'Width', 'Height'].forEach(p => {
-            elements[`roi${p}`].addEventListener('input', e => {
-                state.roi[p.toLowerCase() === 'width' ? 'width' : (p.toLowerCase() === 'height' ? 'height' : p.toLowerCase())] = e.target.value / 100;
-                document.getElementById(`val${p[0]}`).textContent = e.target.value;
-                updateRoiOverlay();
-            });
+    // Start video capture
+    async function startCapture() {
+      const deviceId = deviceSelect.value;
+      if (!deviceId) return alert("Select a device first.");
+      try {
+        videoStream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: deviceId } },
+          audio: false
         });
+        videoPreview.srcObject = videoStream;
+        await videoPreview.play();
+        startCaptureBtn.disabled = true;
+        stopCaptureBtn.disabled = false;
+        deviceSelect.disabled = true;
+        updateROIOverlay();
+        // Initialize OCR
+        await initOCR();
+      } catch(err) {
+        console.error(err);
+      }
+    }
 
-        elements.clearLogBtn.addEventListener('click', () => {
-            state.battle.turnsData = {};
-            state.battle.activePokemon.clear();
-            renderLog();
+    // Stop video capture
+    function stopCapture() {
+      if (videoStream) {
+        videoStream.getTracks().forEach(t => t.stop());
+        videoStream = null;
+      }
+      if (parsing) stopParser();
+      startCaptureBtn.disabled = false;
+      stopCaptureBtn.disabled = true;
+      deviceSelect.disabled = false;
+      roiBox.classList.add('hidden');
+    }
+
+    // Initialize Tesseract WASM
+    async function initOCR() {
+      if (ocrClient) return;
+      debugLog.textContent = "[Debug] Loading OCR engine...";
+      ocrClient = new Tesseract.OCRClient();
+      // Load English model; ensure eng.traineddata is served from same origin
+      await ocrClient.loadModel('eng.traineddata');
+      ocrStatusBadge.textContent = "OCR Ready";
+      ocrStatusBadge.className = 'px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs';
+      startParserBtn.disabled = false;
+    }
+
+    // Update ROI overlay visualization
+    function updateROIOverlay() {
+      const w = videoPreview.clientWidth;
+      const h = videoPreview.clientHeight;
+      const x = (roiX.value/100)*w;
+      const y = (roiY.value/100)*h;
+      const bw = (roiWidth.value/100)*w;
+      const bh = (roiHeight.value/100)*h;
+      roiBox.style.left = x + 'px';
+      roiBox.style.top = y + 'px';
+      roiBox.style.width = bw + 'px';
+      roiBox.style.height = bh + 'px';
+      roiBox.classList.remove('hidden');
+      // Adjust hidden canvas to same size
+      cropCanvas.width = w;
+      cropCanvas.height = h;
+    }
+
+    // Attach ROI slider events
+    [roiX, roiY, roiWidth, roiHeight].forEach(el => {
+      el.addEventListener('input', () => {
+        valX.textContent = roiX.value;
+        valY.textContent = roiY.value;
+        valW.textContent = roiWidth.value;
+        valH.textContent = roiHeight.value;
+        updateROIOverlay();
+      });
+    });
+
+    // Start/Stop parser
+    function startParser() {
+      if (!ocrClient) return;
+      parsing = true;
+      startParserBtn.textContent = "Stop Parser";
+      startParserBtn.classList.remove('btn-primary');
+      startParserBtn.classList.add('bg-red-600','hover:bg-red-700','text-white');
+      // Run OCR every 500ms
+      ocrInterval = setInterval(processFrame, 500);
+    }
+    function stopParser() {
+      parsing = false;
+      clearInterval(ocrInterval);
+      startParserBtn.textContent = "Start Battle Parser";
+      startParserBtn.classList.remove('bg-red-600','hover:bg-red-700','text-white');
+      startParserBtn.classList.add('btn-primary');
+    }
+
+    startParserBtn.addEventListener('click', () => {
+      parsing ? stopParser() : startParser();
+    });
+
+    // Capture frame and run OCR
+    async function processFrame() {
+      if (!videoPreview.videoWidth) return;
+      const vw = videoPreview.videoWidth, vh = videoPreview.videoHeight;
+      const rect = videoPreview.getBoundingClientRect();
+      const rx = roiX.value/100 * vw;
+      const ry = roiY.value/100 * vh;
+      const rw = roiWidth.value/100 * vw;
+      const rh = roiHeight.value/100 * vh;
+      // Draw to canvas at double size for clarity
+      const ctx = cropCanvas.getContext('2d');
+      ctx.drawImage(videoPreview, rx, ry, rw, rh, 0, 0, rw*2, rh*2);
+      // Preprocess: grayscale & threshold
+      const imageData = ctx.getImageData(0,0,rw*2,rh*2);
+      const data = imageData.data;
+      // Convert to grayscale and threshold
+      let thresh = 128;
+      for(let i=0; i<data.length; i+=4) {
+        const gray = 0.2126*data[i] + 0.7152*data[i+1] + 0.0722*data[i+2];
+        const val = (gray > thresh ? 255 : 0);
+        data[i] = data[i+1] = data[i+2] = val;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      // Now run OCR on the processed canvas
+      try {
+        const bitmap = await createImageBitmap(cropCanvas);
+        await ocrClient.loadImage(bitmap);
+        const res = await ocrClient.getText();
+        const txt = res.trim();
+        if (!txt) return;
+        debugLog.textContent = `[Raw OCR] ${txt}`;
+        // Debounce similar text
+        const now = performance.now();
+        if (txt === lastOCRText && (now - lastOCRTime) < ocrDebounce) {
+          // same text too soon, skip
+          return;
+        }
+        lastOCRText = txt;
+        lastOCRTime = now;
+        // Clean up and parse line
+        handleLine(txt);
+      } catch(e) {
+        console.error(e);
+      }
+    }
+
+    // Simple Levenshtein distance for fuzzy compare
+    function levenshtein(a,b) {
+      if (!a) return b.length;
+      if (!b) return a.length;
+      const matrix = [];
+      for(let i=0;i<=b.length;i++) matrix[i] = [i];
+      for(let j=0;j<=a.length;j++) matrix[0][j] = j;
+      for(let i=1;i<=b.length;i++) {
+        for(let j=1;j<=a.length;j++) {
+          matrix[i][j] = b[i-1]===a[j-1] ? matrix[i-1][j-1] : 1 + Math.min(matrix[i-1][j],matrix[i][j-1],matrix[i-1][j-1]);
+        }
+      }
+      return matrix[b.length][a.length];
+    }
+
+    // Jaro-Winkler similarity (for normalization)
+    function jaroWinkler(s1, s2) {
+      // (Implement or use library)
+      // For brevity, using a simple approach: lowercased.
+      if (!s1.length || !s2.length) return 0;
+      // Jaro part
+      const matchDist = Math.floor(Math.max(s1.length, s2.length)/2) - 1;
+      let matches=0, trans=0;
+      const s1Match = [], s2Match = [];
+      for(let i=0;i<s1.length;i++) {
+        const start = Math.max(0, i-matchDist);
+        const end = Math.min(i+matchDist+1, s2.length);
+        for(let j=start;j<end;j++){
+          if(!s2Match[j] && s1[i]===s2[j]) {
+            s1Match[i] = true;
+            s2Match[j] = true;
+            matches++;
+            break;
+          }
+        }
+      }
+      if (matches===0) return 0;
+      let k=0;
+      for(let i=0;i<s1.length;i++){
+        if(s1Match[i]){
+          while(!s2Match[k]) k++;
+          if(s1[i] !== s2[k]) trans++;
+          k++;
+        }
+      }
+      trans = trans/2;
+      const m = matches;
+      const jaro = ((m/s1.length) + (m/s2.length) + ((m-trans)/m))/3;
+      // Winkler adjustment (prefix)
+      let pref = 0;
+      const maxPref = 4;
+      for(;pref<maxPref && s1[pref]===s2[pref];pref++);
+      return jaro + pref*0.1*(1-jaro);
+    }
+
+    // Dictionaries (should be loaded from JSON files)
+    let pokemonList = ["Pikachu","Bulbasaur","Charmander","Squirtle","Blastoise","Tyranitar","Incineroar","Farigiraf","Scovillain","Venusaur","Blaziken"]; 
+    let moveList = ["Fake Out","Flare Blitz","Twin Beam","Stone Edge","Thunderbolt","Scald","Dragon Dance","Hyper Beam","Giga Drain","Intimidate"];
+    // ... fill out complete lists or load via fetch()
+
+    // Normalize names using fuzzy matching
+    function normalizeName(str, list) {
+      if (!str) return str;
+      let best = null, bestScore = -1;
+      const s = str.trim();
+      list.forEach(item => {
+        const score = jaroWinkler(s.toLowerCase(), item.toLowerCase());
+        if (score > bestScore) { bestScore = score; best = item; }
+      });
+      // Only accept high similarity (e.g. >0.8)
+      if (bestScore > 0.8) return best;
+      return str;
+    }
+
+    // Process one OCR'd line
+    function handleLine(line) {
+      const lower = line.toLowerCase();
+      // Example normalization: fix common OCR typos (e.g. Farigirat -> Farigiraf)
+      line = line.replace(/farigirat|fatigiraf|farigitaf/gi, 'Farigiraf')
+                 .replace(/aerodacty/gi, 'Aerodactyl');
+      // Deduplicate multi-line (if ends with letter, waiting for continuation, etc.)
+      // [Not implemented in this snippet]
+
+      // Fuzzy-correct known entities
+      // E.g. if line contains a Pokemon name:
+      pokemonList.forEach(name => {
+        const regex = new RegExp(name.substr(0,3), 'i'); 
+      });
+      // Actually, we parse line with regex:
+      let ev = { raw: line, turn: state.turn };
+      if (/used/i.test(line)) {
+        ev.type = 'move';
+        const m = line.match(/^([\w\s]+) used ([\w\s]+)!/i);
+        if (m) {
+          let user = m[1].trim();
+          let mv = m[2].trim();
+          user = normalizeName(user, pokemonList);
+          mv = normalizeName(mv, moveList);
+          ev.user = user;
+          ev.move = mv;
+          state.activePokemon.add(user);
+        }
+      } else if (/flinched/i.test(line)) {
+        ev.type = 'status';
+        const m = line.match(/^([\w\s]+) flinched/i);
+        if (m) {
+          ev.target = normalizeName(m[1].trim(), pokemonList);
+          ev.effect = 'flinch';
+        }
+      } else if (/fainted/i.test(line)) {
+        ev.type = 'faint';
+        const m = line.match(/^([\w\s]+) fainted/i);
+        if (m) {
+          ev.target = normalizeName(m[1].trim(), pokemonList);
+          // Mark fainted
+        }
+      } else if (/Twisted the dimensions/i.test(line)) {
+        ev.type = 'field';
+        state.trickRoom = !state.trickRoom;
+        ev.effect = 'Trick Room';
+      } else if (/Stone Edge/i.test(line) || /Dragon Dance/i.test(line) || /Hyper Beam/i.test(line)) {
+        // Could classify as part of move parsing above
+      }
+      // Update state and log event
+      if (!state.turns[state.turn]) state.turns[state.turn] = [];
+      state.turns[state.turn].push(ev);
+      renderLog();
+    }
+
+    // Render the structured log
+    function renderLog() {
+      battleLog.innerHTML = '';
+      for (const turnNum in state.turns) {
+        const events = state.turns[turnNum];
+        const header = document.createElement('div');
+        header.className = 'turn-header';
+        header.textContent = `Turn ${turnNum}`;
+        battleLog.appendChild(header);
+        events.forEach(ev => {
+          const div = document.createElement('div');
+          div.className = 'event-item ' + (ev.type||'');
+          div.textContent = `• ${ev.raw}`;
+          battleLog.appendChild(div);
         });
+      }
+      stateTurn.textContent = state.turn;
+      stateField.textContent = state.field;
+      stateTrick.textContent = state.trickRoom ? 'Active' : 'Inactive';
+      stateTeam.textContent = Array.from(state.activePokemon).join(', ') || 'None';
+      battleLog.scrollTop = battleLog.scrollHeight;
+    }
 
-        elements.copyLogBtn.addEventListener('click', () => {
-            let text = '';
-            for (let t in state.battle.turnsData) {
-                text += `=== Turn ${t} ===\n`;
-                state.battle.turnsData[t].forEach(e => text += ` - ${e.raw}\n`);
-            }
-            navigator.clipboard.writeText(text);
-        });
+    // Clear/copy buttons
+    clearLogBtn.addEventListener('click', () => {
+      state.turn = 1; state.activePokemon.clear(); state.turns = {};
+      renderLog();
+    });
+    copyLogBtn.addEventListener('click', () => {
+      let text = '';
+      for (const t in state.turns) {
+        text += `=== Turn ${t} ===\n`;
+        state.turns[t].forEach(e => text += ` - ${e.raw}\n`);
+      }
+      navigator.clipboard.writeText(text).then(() => alert('Copied!'));
+    });
 
-        window.addEventListener('resize', updateCanvas);
-        enumerateDevices();
-        initTesseract();
-    </script>
+    startCaptureBtn.addEventListener('click', startCapture);
+    stopCaptureBtn.addEventListener('click', stopCapture);
+
+    // Initialize on load
+    window.addEventListener('load', () => {
+      enumerateDevices();
+    });
+    window.addEventListener('resize', updateROIOverlay);
+  </script>
 </body>
 </html>

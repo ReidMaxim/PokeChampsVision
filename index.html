@@ -1,509 +1,756 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>Pokémon Champions Battle Log Parser</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- Tailwind CSS for styling (via CDN) -->
-  <script src="https://cdn.tailwindcss.com"></script>
+<title>Pokemon Champions OCR Logger MVP</title>
 
-  <!-- Include tesseract-wasm (make sure to serve the WASM files from same origin) -->
-  <script src="https://unpkg.com/tesseract-wasm/dist/tesseract-wasm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
-  <!-- Include fuzzy string libraries if desired (or implement our own) -->
-  <!-- Example: Fuse.js or similar could help; here we'll implement basic Levenshtein/JW in JS -->
+<style>
 
-  <style>
-    body { background-color: #0b0f19; color: #e2e8f0; font-family: sans-serif; }
-    .panel { background-color: #111827; border: 1px solid #1f2937; border-radius: 0.75rem; padding: 1rem; }
-    .battle-log { height: 400px; overflow-y: auto; background-color: #0d1322; border: 1px solid #1e293b; border-radius: 0.5rem; padding: 1rem; font-family: monospace; font-size: 0.875rem; }
-    .debug-log { height: 100px; overflow-y: auto; background: #030712; color: #6b7280; font-family: monospace; font-size: 0.75rem; border:1px solid #1f2937; border-radius:0.5rem; padding:0.75rem; }
-    .turn-header { font-weight: bold; color: #38bdf8; margin-top: 1rem; margin-bottom: 0.5rem; border-bottom: 1px solid #1e293b; padding-bottom: 0.25rem; }
-    .event-item { margin-left: 1rem; margin-bottom: 0.25rem; color: #cbd5e1; }
-    .event-item.move { color: #34d399; }
-    .event-item.faint { color: #ef4444; }
-    /* ... (other color classes) ... */
-    #videoPreview { width: 100%; background: #000; }
-    #cropCanvas { display: none; }
-    #roiBox { position: absolute; border: 2px dashed #38bdf8; background: rgba(56,189,248,0.2); }
-  </style>
+body{
+background:#111;
+color:white;
+font-family:Arial, sans-serif;
+}
+
+h1{
+color:#ffcc00;
+}
+
+button{
+padding:10px;
+font-size:16px;
+margin:5px;
+}
+
+video{
+display:none;
+}
+
+canvas{
+border:2px solid #555;
+margin:5px;
+}
+
+.controls{
+background:#222;
+padding:15px;
+width:500px;
+}
+
+label{
+display:block;
+margin:8px;
+}
+
+input{
+width:300px;
+}
+
+#log,
+#json{
+background:#000;
+height:250px;
+overflow:auto;
+padding:10px;
+font-family:monospace;
+}
+
+.good{
+color:#00ff99;
+}
+
+.warn{
+color:#ffaa00;
+}
+
+
+</style>
+
 </head>
-<body class="p-6">
-  <div class="max-w-4xl mx-auto space-y-6">
 
-    <!-- Header -->
-    <div class="flex justify-between items-center">
-      <h1 class="text-3xl font-bold text-sky-400">Pokémon Champions Battle Parser</h1>
-      <span id="ocrStatusBadge" class="px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-semibold">Initializing OCR...</span>
-    </div>
 
-    <!-- Controls Panel -->
-    <div class="panel space-y-4">
-      <div>
-        <label class="block text-slate-400 mb-1">Video Capture Device</label>
-        <select id="deviceSelect" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200">
-          <option value="">-- Select Device --</option>
-        </select>
-      </div>
-      <div class="flex gap-2">
-        <button id="startCaptureBtn" class="btn-primary flex-1">Start Capture</button>
-        <button id="stopCaptureBtn" class="btn-secondary flex-1" disabled>Stop</button>
-      </div>
-      <div>
-        <button id="startParserBtn" class="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed" disabled>Start Battle Parser</button>
-      </div>
-    </div>
+<body>
 
-    <!-- Video & ROI -->
-    <div class="relative border border-slate-700">
-      <video id="videoPreview" autoplay muted playsinline></video>
-      <canvas id="cropCanvas"></canvas>
-      <div id="roiBox" class="hidden"></div>
-    </div>
 
-    <!-- ROI Sliders -->
-    <div class="panel grid grid-cols-2 gap-4 text-xs">
-      <div>
-        <label class="text-slate-400 mb-1">ROI X: <span id="valX">0</span>%</label>
-        <input type="range" id="roiX" min="0" max="100" value="0" class="w-full">
-      </div>
-      <div>
-        <label class="text-slate-400 mb-1">ROI Y: <span id="valY">75</span>%</label>
-        <input type="range" id="roiY" min="0" max="100" value="75" class="w-full">
-      </div>
-      <div>
-        <label class="text-slate-400 mb-1">ROI Width: <span id="valW">100</span>%</label>
-        <input type="range" id="roiWidth" min="20" max="100" value="100" class="w-full">
-      </div>
-      <div>
-        <label class="text-slate-400 mb-1">ROI Height: <span id="valH">25</span>%</label>
-        <input type="range" id="roiHeight" min="5" max="50" value="25" class="w-full">
-      </div>
-    </div>
+<h1>Pokemon Champions OCR Logger</h1>
 
-    <!-- Live State & Log -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div class="panel space-y-3">
-        <h2 class="text-sm font-bold uppercase text-slate-400">Live Battle State</h2>
-        <div class="grid grid-cols-2 gap-2 text-xs">
-          <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-            <span class="text-slate-500 block">Turn</span>
-            <span id="stateTurn" class="text-lg font-bold text-sky-400">1</span>
-          </div>
-          <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-            <span class="text-slate-500 block">Field</span>
-            <span id="stateField" class="text-slate-200">None</span>
-          </div>
-          <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-            <span class="text-slate-500 block">Trick Room</span>
-            <span id="stateTrick" class="text-slate-200">Inactive</span>
-          </div>
-          <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-            <span class="text-slate-500 block">Active Pokémon</span>
-            <span id="stateTeam" class="text-slate-200 truncate">None</span>
-          </div>
-        </div>
-      </div>
 
-      <div class="panel space-y-3">
-        <h2 class="text-sm font-bold uppercase text-slate-400">Replay Log</h2>
-        <div class="flex gap-2">
-          <button id="copyLogBtn" class="btn-secondary text-xs px-3 py-1.5">Copy</button>
-          <button id="clearLogBtn" class="btn-secondary text-xs px-3 py-1.5">Clear</button>
-        </div>
-        <div id="battleLog" class="battle-log">
-          <div class="text-slate-500 italic">[System] Awaiting battle data...</div>
-        </div>
-      </div>
-    </div>
+<button onclick="startOCR()">
+Start Capture
+</button>
 
-    <!-- Debug output -->
-    <div class="panel space-y-1">
-      <label class="uppercase text-xs text-slate-500">Debug Info</label>
-      <div id="debugLog" class="debug-log">[Debug] No OCR data yet.</div>
-    </div>
-  </div>
 
-  <script>
-    // State and globals
-    let videoStream = null;
-    let ocrClient = null;
-    let parsing = false;
-    let lastOCRText = "";
-    let lastOCRTime = 0;
-    const ocrDebounce = 1000; // 1 second
-    const state = {
-      turn: 1,
-      field: 'None',
-      trickRoom: false,
-      activePokemon: new Set(),
-      turns: {}
-    };
+<div class="controls">
 
-    // Elements
-    const deviceSelect = document.getElementById('deviceSelect');
-    const startCaptureBtn = document.getElementById('startCaptureBtn');
-    const stopCaptureBtn = document.getElementById('stopCaptureBtn');
-    const startParserBtn = document.getElementById('startParserBtn');
-    const videoPreview = document.getElementById('videoPreview');
-    const cropCanvas = document.getElementById('cropCanvas');
-    const roiBox = document.getElementById('roiBox');
-    const stateTurn = document.getElementById('stateTurn');
-    const stateField = document.getElementById('stateField');
-    const stateTrick = document.getElementById('stateTrick');
-    const stateTeam = document.getElementById('stateTeam');
-    const battleLog = document.getElementById('battleLog');
-    const debugLog = document.getElementById('debugLog');
-    const copyLogBtn = document.getElementById('copyLogBtn');
-    const clearLogBtn = document.getElementById('clearLogBtn');
-    const roiX = document.getElementById('roiX');
-    const roiY = document.getElementById('roiY');
-    const roiWidth = document.getElementById('roiWidth');
-    const roiHeight = document.getElementById('roiHeight');
-    const valX = document.getElementById('valX');
-    const valY = document.getElementById('valY');
-    const valW = document.getElementById('valW');
-    const valH = document.getElementById('valH');
+<h3>ROI Controls</h3>
 
-    // Load device list
-    async function enumerateDevices() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({video:true});
-        stream.getTracks().forEach(t => t.stop());
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoInputs = devices.filter(d => d.kind === 'videoinput');
-        deviceSelect.innerHTML = '<option value="">-- Select Device --</option>';
-        videoInputs.forEach((d, idx) => {
-          const opt = document.createElement('option');
-          opt.value = d.deviceId;
-          opt.textContent = d.label || `Camera ${idx+1}`;
-          deviceSelect.appendChild(opt);
-        });
-        if(videoInputs[0]) deviceSelect.value = videoInputs[0].deviceId;
-      } catch(e) {
-        console.error(e);
-      }
-    }
 
-    // Start video capture
-    async function startCapture() {
-      const deviceId = deviceSelect.value;
-      if (!deviceId) return alert("Select a device first.");
-      try {
-        videoStream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: deviceId } },
-          audio: false
-        });
-        videoPreview.srcObject = videoStream;
-        await videoPreview.play();
-        startCaptureBtn.disabled = true;
-        stopCaptureBtn.disabled = false;
-        deviceSelect.disabled = true;
-        updateROIOverlay();
-        // Initialize OCR
-        await initOCR();
-      } catch(err) {
-        console.error(err);
-      }
-    }
+<label>
+X
+<input id="rx" type="range" min="0" max="960" value="150">
+</label>
 
-    // Stop video capture
-    function stopCapture() {
-      if (videoStream) {
-        videoStream.getTracks().forEach(t => t.stop());
-        videoStream = null;
-      }
-      if (parsing) stopParser();
-      startCaptureBtn.disabled = false;
-      stopCaptureBtn.disabled = true;
-      deviceSelect.disabled = false;
-      roiBox.classList.add('hidden');
-    }
 
-    // Initialize Tesseract WASM
-    async function initOCR() {
-      if (ocrClient) return;
-      debugLog.textContent = "[Debug] Loading OCR engine...";
-      ocrClient = new Tesseract.OCRClient();
-      // Load English model; ensure eng.traineddata is served from same origin
-      await ocrClient.loadModel('eng.traineddata');
-      ocrStatusBadge.textContent = "OCR Ready";
-      ocrStatusBadge.className = 'px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs';
-      startParserBtn.disabled = false;
-    }
+<label>
+Y
+<input id="ry" type="range" min="0" max="540" value="390">
+</label>
 
-    // Update ROI overlay visualization
-    function updateROIOverlay() {
-      const w = videoPreview.clientWidth;
-      const h = videoPreview.clientHeight;
-      const x = (roiX.value/100)*w;
-      const y = (roiY.value/100)*h;
-      const bw = (roiWidth.value/100)*w;
-      const bh = (roiHeight.value/100)*h;
-      roiBox.style.left = x + 'px';
-      roiBox.style.top = y + 'px';
-      roiBox.style.width = bw + 'px';
-      roiBox.style.height = bh + 'px';
-      roiBox.classList.remove('hidden');
-      // Adjust hidden canvas to same size
-      cropCanvas.width = w;
-      cropCanvas.height = h;
-    }
 
-    // Attach ROI slider events
-    [roiX, roiY, roiWidth, roiHeight].forEach(el => {
-      el.addEventListener('input', () => {
-        valX.textContent = roiX.value;
-        valY.textContent = roiY.value;
-        valW.textContent = roiWidth.value;
-        valH.textContent = roiHeight.value;
-        updateROIOverlay();
-      });
-    });
+<label>
+Width
+<input id="rw" type="range" min="100" max="960" value="650">
+</label>
 
-    // Start/Stop parser
-    function startParser() {
-      if (!ocrClient) return;
-      parsing = true;
-      startParserBtn.textContent = "Stop Parser";
-      startParserBtn.classList.remove('btn-primary');
-      startParserBtn.classList.add('bg-red-600','hover:bg-red-700','text-white');
-      // Run OCR every 500ms
-      ocrInterval = setInterval(processFrame, 500);
-    }
-    function stopParser() {
-      parsing = false;
-      clearInterval(ocrInterval);
-      startParserBtn.textContent = "Start Battle Parser";
-      startParserBtn.classList.remove('bg-red-600','hover:bg-red-700','text-white');
-      startParserBtn.classList.add('btn-primary');
-    }
 
-    startParserBtn.addEventListener('click', () => {
-      parsing ? stopParser() : startParser();
-    });
+<label>
+Height
+<input id="rh" type="range" min="40" max="200" value="100">
+</label>
 
-    // Capture frame and run OCR
-    async function processFrame() {
-      if (!videoPreview.videoWidth) return;
-      const vw = videoPreview.videoWidth, vh = videoPreview.videoHeight;
-      const rect = videoPreview.getBoundingClientRect();
-      const rx = roiX.value/100 * vw;
-      const ry = roiY.value/100 * vh;
-      const rw = roiWidth.value/100 * vw;
-      const rh = roiHeight.value/100 * vh;
-      // Draw to canvas at double size for clarity
-      const ctx = cropCanvas.getContext('2d');
-      ctx.drawImage(videoPreview, rx, ry, rw, rh, 0, 0, rw*2, rh*2);
-      // Preprocess: grayscale & threshold
-      const imageData = ctx.getImageData(0,0,rw*2,rh*2);
-      const data = imageData.data;
-      // Convert to grayscale and threshold
-      let thresh = 128;
-      for(let i=0; i<data.length; i+=4) {
-        const gray = 0.2126*data[i] + 0.7152*data[i+1] + 0.0722*data[i+2];
-        const val = (gray > thresh ? 255 : 0);
-        data[i] = data[i+1] = data[i+2] = val;
-      }
-      ctx.putImageData(imageData, 0, 0);
-      // Now run OCR on the processed canvas
-      try {
-        const bitmap = await createImageBitmap(cropCanvas);
-        await ocrClient.loadImage(bitmap);
-        const res = await ocrClient.getText();
-        const txt = res.trim();
-        if (!txt) return;
-        debugLog.textContent = `[Raw OCR] ${txt}`;
-        // Debounce similar text
-        const now = performance.now();
-        if (txt === lastOCRText && (now - lastOCRTime) < ocrDebounce) {
-          // same text too soon, skip
-          return;
-        }
-        lastOCRText = txt;
-        lastOCRTime = now;
-        // Clean up and parse line
-        handleLine(txt);
-      } catch(e) {
-        console.error(e);
-      }
-    }
 
-    // Simple Levenshtein distance for fuzzy compare
-    function levenshtein(a,b) {
-      if (!a) return b.length;
-      if (!b) return a.length;
-      const matrix = [];
-      for(let i=0;i<=b.length;i++) matrix[i] = [i];
-      for(let j=0;j<=a.length;j++) matrix[0][j] = j;
-      for(let i=1;i<=b.length;i++) {
-        for(let j=1;j<=a.length;j++) {
-          matrix[i][j] = b[i-1]===a[j-1] ? matrix[i-1][j-1] : 1 + Math.min(matrix[i-1][j],matrix[i][j-1],matrix[i-1][j-1]);
-        }
-      }
-      return matrix[b.length][a.length];
-    }
+</div>
 
-    // Jaro-Winkler similarity (for normalization)
-    function jaroWinkler(s1, s2) {
-      // (Implement or use library)
-      // For brevity, using a simple approach: lowercased.
-      if (!s1.length || !s2.length) return 0;
-      // Jaro part
-      const matchDist = Math.floor(Math.max(s1.length, s2.length)/2) - 1;
-      let matches=0, trans=0;
-      const s1Match = [], s2Match = [];
-      for(let i=0;i<s1.length;i++) {
-        const start = Math.max(0, i-matchDist);
-        const end = Math.min(i+matchDist+1, s2.length);
-        for(let j=start;j<end;j++){
-          if(!s2Match[j] && s1[i]===s2[j]) {
-            s1Match[i] = true;
-            s2Match[j] = true;
-            matches++;
-            break;
-          }
-        }
-      }
-      if (matches===0) return 0;
-      let k=0;
-      for(let i=0;i<s1.length;i++){
-        if(s1Match[i]){
-          while(!s2Match[k]) k++;
-          if(s1[i] !== s2[k]) trans++;
-          k++;
-        }
-      }
-      trans = trans/2;
-      const m = matches;
-      const jaro = ((m/s1.length) + (m/s2.length) + ((m-trans)/m))/3;
-      // Winkler adjustment (prefix)
-      let pref = 0;
-      const maxPref = 4;
-      for(;pref<maxPref && s1[pref]===s2[pref];pref++);
-      return jaro + pref*0.1*(1-jaro);
-    }
 
-    // Dictionaries (should be loaded from JSON files)
-    let pokemonList = ["Pikachu","Bulbasaur","Charmander","Squirtle","Blastoise","Tyranitar","Incineroar","Farigiraf","Scovillain","Venusaur","Blaziken"]; 
-    let moveList = ["Fake Out","Flare Blitz","Twin Beam","Stone Edge","Thunderbolt","Scald","Dragon Dance","Hyper Beam","Giga Drain","Intimidate"];
-    // ... fill out complete lists or load via fetch()
 
-    // Normalize names using fuzzy matching
-    function normalizeName(str, list) {
-      if (!str) return str;
-      let best = null, bestScore = -1;
-      const s = str.trim();
-      list.forEach(item => {
-        const score = jaroWinkler(s.toLowerCase(), item.toLowerCase());
-        if (score > bestScore) { bestScore = score; best = item; }
-      });
-      // Only accept high similarity (e.g. >0.8)
-      if (bestScore > 0.8) return best;
-      return str;
-    }
+<video id="video"
+width="960"
+height="540"
+autoplay>
+</video>
 
-    // Process one OCR'd line
-    function handleLine(line) {
-      const lower = line.toLowerCase();
-      // Example normalization: fix common OCR typos (e.g. Farigirat -> Farigiraf)
-      line = line.replace(/farigirat|fatigiraf|farigitaf/gi, 'Farigiraf')
-                 .replace(/aerodacty/gi, 'Aerodactyl');
-      // Deduplicate multi-line (if ends with letter, waiting for continuation, etc.)
-      // [Not implemented in this snippet]
 
-      // Fuzzy-correct known entities
-      // E.g. if line contains a Pokemon name:
-      pokemonList.forEach(name => {
-        const regex = new RegExp(name.substr(0,3), 'i'); 
-      });
-      // Actually, we parse line with regex:
-      let ev = { raw: line, turn: state.turn };
-      if (/used/i.test(line)) {
-        ev.type = 'move';
-        const m = line.match(/^([\w\s]+) used ([\w\s]+)!/i);
-        if (m) {
-          let user = m[1].trim();
-          let mv = m[2].trim();
-          user = normalizeName(user, pokemonList);
-          mv = normalizeName(mv, moveList);
-          ev.user = user;
-          ev.move = mv;
-          state.activePokemon.add(user);
-        }
-      } else if (/flinched/i.test(line)) {
-        ev.type = 'status';
-        const m = line.match(/^([\w\s]+) flinched/i);
-        if (m) {
-          ev.target = normalizeName(m[1].trim(), pokemonList);
-          ev.effect = 'flinch';
-        }
-      } else if (/fainted/i.test(line)) {
-        ev.type = 'faint';
-        const m = line.match(/^([\w\s]+) fainted/i);
-        if (m) {
-          ev.target = normalizeName(m[1].trim(), pokemonList);
-          // Mark fainted
-        }
-      } else if (/Twisted the dimensions/i.test(line)) {
-        ev.type = 'field';
-        state.trickRoom = !state.trickRoom;
-        ev.effect = 'Trick Room';
-      } else if (/Stone Edge/i.test(line) || /Dragon Dance/i.test(line) || /Hyper Beam/i.test(line)) {
-        // Could classify as part of move parsing above
-      }
-      // Update state and log event
-      if (!state.turns[state.turn]) state.turns[state.turn] = [];
-      state.turns[state.turn].push(ev);
-      renderLog();
-    }
+<h3>Camera Preview</h3>
 
-    // Render the structured log
-    function renderLog() {
-      battleLog.innerHTML = '';
-      for (const turnNum in state.turns) {
-        const events = state.turns[turnNum];
-        const header = document.createElement('div');
-        header.className = 'turn-header';
-        header.textContent = `Turn ${turnNum}`;
-        battleLog.appendChild(header);
-        events.forEach(ev => {
-          const div = document.createElement('div');
-          div.className = 'event-item ' + (ev.type||'');
-          div.textContent = `• ${ev.raw}`;
-          battleLog.appendChild(div);
-        });
-      }
-      stateTurn.textContent = state.turn;
-      stateField.textContent = state.field;
-      stateTrick.textContent = state.trickRoom ? 'Active' : 'Inactive';
-      stateTeam.textContent = Array.from(state.activePokemon).join(', ') || 'None';
-      battleLog.scrollTop = battleLog.scrollHeight;
-    }
+<canvas id="preview"
+width="960"
+height="540">
+</canvas>
 
-    // Clear/copy buttons
-    clearLogBtn.addEventListener('click', () => {
-      state.turn = 1; state.activePokemon.clear(); state.turns = {};
-      renderLog();
-    });
-    copyLogBtn.addEventListener('click', () => {
-      let text = '';
-      for (const t in state.turns) {
-        text += `=== Turn ${t} ===\n`;
-        state.turns[t].forEach(e => text += ` - ${e.raw}\n`);
-      }
-      navigator.clipboard.writeText(text).then(() => alert('Copied!'));
-    });
 
-    startCaptureBtn.addEventListener('click', startCapture);
-    stopCaptureBtn.addEventListener('click', stopCapture);
+<h3>OCR Crop</h3>
 
-    // Initialize on load
-    window.addEventListener('load', () => {
-      enumerateDevices();
-    });
-    window.addEventListener('resize', updateROIOverlay);
-  </script>
+<canvas id="crop">
+</canvas>
+
+
+
+<h3>OCR Log</h3>
+
+<div id="log"></div>
+
+
+<h3>Events</h3>
+
+<div id="json"></div>
+
+
+
+<script>
+
+
+const video =
+document.getElementById("video");
+
+
+const preview =
+document.getElementById("preview");
+
+
+const pctx =
+preview.getContext("2d");
+
+
+const cropCanvas =
+document.getElementById("crop");
+
+
+const log =
+document.getElementById("log");
+
+
+const json =
+document.getElementById("json");
+
+
+
+let worker;
+
+let running=false;
+
+let lastText="";
+
+let lastTime=0;
+
+
+
+function roi(){
+
+return {
+
+x:Number(rx.value),
+y:Number(ry.value),
+w:Number(rw.value),
+h:Number(rh.value)
+
+};
+
+}
+
+
+
+async function startOCR(){
+
+
+if(running)
+return;
+
+
+running=true;
+
+
+const stream =
+await navigator.mediaDevices.getUserMedia({
+
+video:{
+width:1280,
+height:720
+}
+
+});
+
+
+video.srcObject=stream;
+
+
+
+worker =
+await Tesseract.createWorker(
+"eng"
+);
+
+
+
+await worker.setParameters({
+
+tessedit_pageseg_mode:"6",
+
+preserve_interword_spaces:"1",
+
+tessedit_char_whitelist:
+"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!?' "
+
+});
+
+
+scanLoop();
+
+
+}
+
+
+
+async function scanLoop(){
+
+
+if(!running)
+return;
+
+
+pctx.drawImage(
+video,
+0,
+0,
+960,
+540
+);
+
+
+
+drawROI();
+
+
+
+const processed =
+preprocess();
+
+
+cropCanvas.width =
+processed.width;
+
+
+cropCanvas.height =
+processed.height;
+
+
+cropCanvas
+.getContext("2d")
+.drawImage(
+processed,
+0,
+0
+);
+
+
+
+let result =
+await worker.recognize(processed);
+
+
+
+let text =
+clean(
+result.data.text
+);
+
+
+let confidence =
+result.data.confidence;
+
+
+
+if(
+text.length>5 &&
+confidence>60
+){
+
+
+if(
+!similar(text,lastText)
+){
+
+lastText=text;
+
+showOCR(
+text,
+confidence
+);
+
+parse(text);
+
+}
+
+}
+
+
+
+setTimeout(
+scanLoop,
+1000
+);
+
+
+}
+
+
+
+
+
+function drawROI(){
+
+
+let r=roi();
+
+
+pctx.strokeStyle="red";
+
+pctx.lineWidth=3;
+
+
+pctx.strokeRect(
+r.x,
+r.y,
+r.w,
+r.h
+);
+
+
+}
+
+
+
+
+function preprocess(){
+
+
+let r=roi();
+
+
+
+let temp =
+document.createElement("canvas");
+
+
+temp.width=r.w;
+
+temp.height=r.h;
+
+
+
+let tctx =
+temp.getContext("2d");
+
+
+
+tctx.drawImage(
+
+preview,
+
+r.x,
+r.y,
+r.w,
+r.h,
+
+0,
+0,
+r.w,
+r.h
+
+);
+
+
+
+let img =
+tctx.getImageData(
+0,
+0,
+r.w,
+r.h
+);
+
+
+
+let d =
+img.data;
+
+
+
+for(
+let i=0;
+i<d.length;
+i+=4
+){
+
+
+let gray =
+(
+d[i]*0.3+
+d[i+1]*0.59+
+d[i+2]*0.11
+);
+
+
+
+gray =
+gray>135
+?
+255
+:
+0;
+
+
+
+d[i]=gray;
+d[i+1]=gray;
+d[i+2]=gray;
+
+
+}
+
+
+
+tctx.putImageData(
+img,
+0,
+0
+);
+
+
+
+let big =
+document.createElement("canvas");
+
+
+big.width =
+r.w*4;
+
+
+big.height =
+r.h*4;
+
+
+
+let bctx =
+big.getContext("2d");
+
+
+bctx.imageSmoothingEnabled=false;
+
+
+bctx.drawImage(
+temp,
+0,
+0,
+big.width,
+big.height
+);
+
+
+
+return big;
+
+
+}
+
+
+
+
+function clean(t){
+
+return t
+
+.replace(/\n/g," ")
+
+.replace(/\s+/g," ")
+
+.trim();
+
+}
+
+
+
+
+function similar(a,b){
+
+if(!b)
+return false;
+
+
+return levenshtein(a,b)<3;
+
+}
+
+
+
+
+function levenshtein(a,b){
+
+
+let matrix=[];
+
+
+for(let i=0;i<=b.length;i++)
+matrix[i]=[i];
+
+
+for(let j=0;j<=a.length;j++)
+matrix[0][j]=j;
+
+
+
+for(let i=1;i<=b.length;i++){
+
+for(let j=1;j<=a.length;j++){
+
+matrix[i][j]=
+b[i-1]==a[j-1]
+
+?
+
+matrix[i-1][j-1]
+
+:
+
+Math.min(
+
+matrix[i-1][j-1]+1,
+
+matrix[i][j-1]+1,
+
+matrix[i-1][j]+1
+
+);
+
+}
+
+}
+
+
+return matrix[b.length][a.length];
+
+}
+
+
+
+
+function showOCR(
+text,
+confidence
+){
+
+
+log.innerHTML +=
+
+`
+<div class="good">
+${confidence.toFixed(1)}%
+<br>
+${text}
+</div>
+<hr>
+`;
+
+
+log.scrollTop=
+log.scrollHeight;
+
+
+}
+
+
+
+
+
+function parse(text){
+
+
+let event=null;
+
+
+
+let move =
+text.match(
+/(.+?) used (.+?)!/i
+);
+
+
+
+if(move){
+
+event={
+
+type:"move",
+
+user:
+move[1]
+.replace("The opposing ",""),
+
+move:
+move[2]
+
+};
+
+}
+
+
+
+if(
+text.includes(
+"super effective"
+)
+){
+
+event={
+
+type:"effect",
+
+effect:
+"super effective"
+
+};
+
+}
+
+
+
+if(
+text.includes(
+"Not very effective"
+)
+){
+
+event={
+
+type:"effect",
+
+effect:
+"not very effective"
+
+};
+
+}
+
+
+
+let hits =
+text.match(
+/hit (\d+) times/i
+);
+
+
+if(hits){
+
+event={
+
+type:"multi_hit",
+
+hits:Number(hits[1])
+
+};
+
+}
+
+
+
+if(
+text.includes("defeated") ||
+text.includes("fainted")
+){
+
+event={
+
+type:"faint",
+
+raw:text
+
+};
+
+}
+
+
+
+
+if(event){
+
+
+json.innerHTML +=
+
+`
+<pre class="warn">
+${JSON.stringify(event,null,2)}
+</pre>
+`;
+
+
+json.scrollTop=
+json.scrollHeight;
+
+
+console.log(event);
+
+
+}
+
+
+
+}
+
+
+
+</script>
+
+
 </body>
 </html>

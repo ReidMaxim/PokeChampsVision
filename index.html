@@ -1,14 +1,9 @@
-Here is the upgraded, production-grade **Pokémon Champions Replay Parser & Live Battle Tracker**.
-
-This version transitions away from raw periodic OCR logging and introduces an intelligent pipeline featuring **frame-difference detection**, **fuzzy normalization for common OCR typos**, **structured event object generation**, **internal battle state tracking with auto-inference**, and **Pokémon Showdown-style turn grouping**.
-
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pokémon Champions Replay Parser & Battle State Tracker</title>
+    <title>Pokémon Champions Modular Replay Parser & Battle State Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/tesseract.js@v6.0.0/dist/tesseract.min.js"></script>
     <style>
@@ -91,18 +86,12 @@ This version transitions away from raw periodic OCR logging and introduces an in
             color: #cbd5e1;
         }
         .event-item.move { color: #34d399; }
+        .event-item.switch { color: #60a5fa; }
+        .event-item.mega { color: #f472b6; }
         .event-item.faint { color: #f87171; }
         .event-item.status { color: #fbbf24; }
         .event-item.field { color: #a78bfa; }
-        .state-badge {
-            display: inline-block;
-            background: #1e293b;
-            border: 1px solid #334155;
-            padding: 0.25rem 0.5rem;
-            border-radius: 0.375rem;
-            font-size: 0.75rem;
-            margin: 0.125rem;
-        }
+        .event-item.effect { color: #38bdf8; }
         .btn-primary {
             background-color: #0284c7;
             color: white;
@@ -129,7 +118,7 @@ This version transitions away from raw periodic OCR logging and introduces an in
         <div class="flex justify-between items-center">
             <div>
                 <h1 class="text-3xl font-extrabold text-sky-400">Pokémon Champions Replay Parser</h1>
-                <p class="text-slate-400 text-sm">Advanced OCR State Tracker & Event Reconstructor</p>
+                <p class="text-slate-400 text-sm">Modular Event Pipeline & Advanced OCR State Tracker</p>
             </div>
             <div id="ocrStatusBadge" class="px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-semibold">
                 Initializing OCR...
@@ -242,9 +231,8 @@ This version transitions away from raw periodic OCR logging and introduces an in
             isCapturing: false,
             isParsing: false,
             parseInterval: null,
-            lastFrameHash: '',
-            lastProcessedText: '',
-            lastProcessedTime: 0,
+            lastAcceptedLine: '',
+            lastAcceptedTime: 0,
             battle: {
                 turn: 1,
                 weather: 'None',
@@ -256,11 +244,6 @@ This version transitions away from raw periodic OCR logging and introduces an in
             },
             roi: { x: 0, y: 0.75, width: 1.0, height: 0.25 }
         };
-
-        // Dictionaries for Normalization & Fuzzy Correction
-        const KNOWN_POKEMON = ['farigiraf', 'sylveon', 'incineroar', 'vanilluxe', 'scovillain', 'raichu', 'lucario', 'politoed', 'swampert', 'milotic', 'slowbro'];
-        const KNOWN_MOVES = ['twin beam', 'hyper beam', 'hyper voice', 'blizzard', 'giga drain', 'flamethrower', 'rage powder', 'volt tackle', 'trick room', 'parting shot', 'fake out', 'liquidation'];
-        const KNOWN_ABILITIES = ['amor tail', 'armor tail', 'intimidate', 'drizzle', 'drought', 'sand stream', 'snow warning'];
 
         const elements = {
             deviceSelect: document.getElementById('deviceSelect'),
@@ -390,54 +373,162 @@ This version transitions away from raw periodic OCR logging and introduces an in
             ctx.strokeRect(x, y, bw, bh);
         }
 
-        // Fuzzy Matcher / Normalizer for Typos
-        function normalizeText(text) {
-            let lower = text.toLowerCase();
-            // Ignore UI noise patterns
-            const uiNoise = ['battle info', 'move info', 'hide summary', 'close', 'movetime', 'sikyostrich', 'normal', 'psychic'];
-            if (uiNoise.some(n => lower.includes(n))) return null;
-
-            // Fix common OCR typos for known terms
-            if (lower.includes('farigirat') || lower.includes('fatigiraf') || lower.includes('farigitaf')) {
-                text = text.replace(/farigirat|fatigiraf|farigitaf/gi, 'Farigiraf');
+        // --- Levenshtein Distance for Fuzzy Deduplication (1-2 char difference check) ---
+        function getLevenshteinDistance(a, b) {
+            const matrix = [];
+            for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+            for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+            for (let i = 1; i <= b.length; i++) {
+                for (let j = 1; j <= a.length; j++) {
+                    if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                        matrix[i][j] = matrix[i - 1][j - 1];
+                    } else {
+                        matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1));
+                    }
+                }
             }
-            if (lower.includes('twin bean')) {
-                text = text.replace(/twin bean/gi, 'Twin Beam');
-            }
-            return text;
+            return matrix[b.length][a.length];
         }
 
-        // Parse Raw Text into Structured Event Object
-        function parseEvent(text) {
-            const lower = text.toLowerCase();
-            const event = { type: 'action', raw: text, timestamp: Date.now() };
+        // --- Pre-processing & Normalization Layer ---
+        function preprocessOcrText(rawText) {
+            if (!rawText) return null;
+            // Normalize whitespace & remove duplicate consecutive line entries
+            let lines = rawText.split('\n')
+                .map(l => l.trim().replace(/\s+/g, ' '))
+                .filter(l => l.length > 0);
 
-            if (lower.includes('fainted')) {
-                event.type = 'faint';
-                const match = text.match(/^([A-Za-z\s]+)\s+fainted/i);
-                if (match) event.target = match[1].trim();
-            } else if (lower.includes('used')) {
+            if (lines.length === 0) return null;
+            let line = lines[0]; // Take primary active line
+
+            // Filter out UI noise phrases
+            const uiNoise = ['battle info', 'move info', 'hide summary', 'close', 'movetime', 'normal', 'psychic'];
+            if (uiNoise.some(n => line.toLowerCase().includes(n))) return null;
+
+            // Common OCR Typo Fixes
+            line = line.replace(/farigirat|fatigiraf|farigitaf/gi, 'Farigiraf');
+            line = line.replace(/twin bean/gi, 'Twin Beam');
+
+            // Fuzzy Deduplication against last accepted line (1-2 char diff tolerance)
+            const now = Date.now();
+            if (state.lastAcceptedLine) {
+                const dist = getLevenshteinDistance(line.toLowerCase(), state.lastAcceptedLine.toLowerCase());
+                if (dist <= 2 && (now - state.lastAcceptedTime < 2000)) {
+                    return null; // Ignore duplicate / minor typo variation within short window
+                }
+            }
+
+            state.lastAcceptedLine = line;
+            state.lastAcceptedTime = now;
+            return line;
+        }
+
+        // --- Modular Event Recognizers Pipeline ---
+        function parseLine(line) {
+            const lower = line.toLowerCase();
+            let event = { type: 'unknown', raw: line, timestamp: Date.now() };
+
+            // 1. Sent Out / Switch Recognizer
+            if (lower.includes('sent out') || lower.includes('go!')) {
+                event.type = 'pokemon_sent_out';
+                const match = line.match(/(?:sent out|go!)\s+([A-Za-z\s]+)!?/i);
+                if (match) {
+                    event.pokemon = match[1].trim();
+                    state.battle.activePokemon.add(event.pokemon);
+                }
+                return event;
+            }
+            if (lower.includes('withdrew') || lower.includes('come back')) {
+                event.type = 'pokemon_withdrew';
+                const match = line.match(/([A-Za-z\s]+)\s+(?:withdrew|come back)/i);
+                if (match) event.pokemon = match[1].trim();
+                return event;
+            }
+
+            // 2. Mega Evolution Recognizer
+            if (lower.includes('mega evolved')) {
+                event.type = 'mega_evolved';
+                const match = line.match(/([A-Za-z\s]+)\s+has Mega Evolved/i);
+                if (match) event.pokemon = match[1].trim();
+                return event;
+            }
+            if (lower.includes('is reacting')) {
+                event.type = 'mega_evolution_started';
+                const match = line.match(/([A-Za-z\s]+)'s\s+[A-Za-z0-9]+\s+is reacting/i);
+                if (match) event.pokemon = match[1].trim();
+                return event;
+            }
+
+            // 3. Move Recognizer (Damaging or Status Moves)
+            if (lower.includes(' used ')) {
                 event.type = 'move';
-                const match = text.match(/^([A-Za-z\s]+)\s+used\s+([A-Za-z\s]+)!?/i);
+                const match = line.match(/^([A-Za-z\s]+)\s+used\s+([A-Za-z\s]+)!?/i);
                 if (match) {
                     event.user = match[1].trim();
                     event.move = match[2].trim();
                     state.battle.activePokemon.add(event.user);
                 }
-            } else if (lower.includes('sent out') || lower.includes('go!')) {
-                event.type = 'status';
-                const match = text.match(/(?:sent out|go!)\s+([A-Za-z\s]+)!?/i);
-                if (match) {
-                    event.pokemon = match[1].trim();
-                    state.battle.activePokemon.add(event.pokemon);
-                }
-            } else if (lower.includes('trick room')) {
+                return event;
+            }
+
+            // 4. Effect & Support Recognizer (Screens, Trick Room, Helpers)
+            if (lower.includes('twisted the dimensions')) {
                 event.type = 'field';
                 state.battle.trickRoom = !state.battle.trickRoom;
-            } else if (lower.includes('rain began') || lower.includes('sunlight turned harsh') || lower.includes('sandstorm')) {
-                event.type = 'field';
-                state.battle.weather = text;
+                event.effect = 'Trick Room';
+                return event;
             }
+            if (lower.includes('ready to help')) {
+                event.type = 'effect';
+                event.effect = 'Helping Hand';
+                return event;
+            }
+            if (lower.includes('made the opposing side stronger against special moves') || lower.includes('light screen')) {
+                event.type = 'effect';
+                event.effect = 'Light Screen';
+                return event;
+            }
+            if (lower.includes('wore off')) {
+                event.type = 'effect';
+                event.effect = 'Screen Expired';
+                return event;
+            }
+
+            // 5. Stat Change Recognizer
+            if (lower.includes('rose') || lower.includes('fell') || lower.includes('maximized')) {
+                event.type = 'stat_change';
+                return event;
+            }
+
+            // 6. Status Condition Recognizer
+            if (lower.includes('paralyzed') || lower.includes('burned') || lower.includes('poisoned') || lower.includes('asleep') || lower.includes('frozen')) {
+                event.type = 'status';
+                return event;
+            }
+
+            // 7. Recoil & Passive Healing / Damage Recognizer
+            if (lower.includes('damaged by the recoil') || lower.includes('energy drained') || lower.includes('hurt by its burn')) {
+                event.type = 'passive_damage';
+                return event;
+            }
+
+            // 8. Faint Recognizer
+            if (lower.includes('fainted')) {
+                event.type = 'faint';
+                const match = line.match(/^([A-Za-z\s]+)\s+fainted/i);
+                if (match) {
+                    event.target = match[1].trim();
+                    state.battle.faintedPokemon.add(event.target);
+                }
+                return event;
+            }
+
+            // 9. Battle End Recognizer
+            if (lower.includes('defeated') || lower.includes('won the battle')) {
+                event.type = 'battle_end';
+                return event;
+            }
+
             return event;
         }
 
@@ -489,32 +580,22 @@ This version transitions away from raw periodic OCR logging and introduces an in
             try {
                 const res = await state.worker.recognize(canvas.toDataURL('image/png'));
                 const rawText = res.data.text.trim();
-
                 if (!rawText) return;
+
                 elements.debugLog.textContent = `[Raw OCR] ${rawText.replace(/\n/g, ' | ')}`;
 
-                const normalized = normalizeText(rawText);
-                if (!normalized) return;
+                // Pre-process and normalize line through deduplication
+                const cleanedLine = preprocessOcrText(rawText);
+                if (!cleanedLine) return;
 
-                const now = Date.now();
-                if (normalized === state.lastProcessedText && (now - state.lastProcessedTime < 1500)) {
-                    return; // Duplicate filter
-                }
+                // Pass through modular parser pipeline
+                const event = parseLine(cleanedLine);
 
-                state.lastProcessedText = normalized;
-                state.lastProcessedTime = now;
-
-                const event = parseEvent(normalized);
                 const currentTurn = state.battle.turn;
                 if (!state.battle.turnsData[currentTurn]) {
                     state.battle.turnsData[currentTurn] = [];
                 }
                 state.battle.turnsData[currentTurn].push(event);
-
-                // Auto-advance turn on certain events if needed
-                if (normalized.toLowerCase().includes('fainted')) {
-                    // Example transition trigger
-                }
 
                 renderLog();
             } catch (err) {
@@ -527,7 +608,7 @@ This version transitions away from raw periodic OCR logging and introduces an in
             state.isParsing = true;
             elements.toggleParserBtn.textContent = 'Stop Battle Parser';
             elements.toggleParserBtn.className = 'w-full bg-rose-600 hover:bg-rose-700 text-white font-semibold py-2.5 rounded-lg';
-            state.parseInterval = setInterval(processOcrTick, 400);
+            state.parseInterval = setInterval(processOcrTick, 350);
         }
 
         function stopParser() {
@@ -574,5 +655,3 @@ This version transitions away from raw periodic OCR logging and introduces an in
     </script>
 </body>
 </html>
-
-```

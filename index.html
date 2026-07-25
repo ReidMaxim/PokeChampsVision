@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pokémon Champions Modular Replay Parser & Battle State Tracker</title>
+    <title>Pokémon Champions Modular Replay Parser & Battle Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/tesseract.js@v6.0.0/dist/tesseract.min.js"></script>
     <style>
@@ -86,12 +86,15 @@
             color: #cbd5e1;
         }
         .event-item.move { color: #34d399; }
+        .event-item.move_failed { color: #f87171; text-decoration: line-through; }
         .event-item.switch { color: #60a5fa; }
         .event-item.mega { color: #f472b6; }
-        .event-item.faint { color: #f87171; }
-        .event-item.status { color: #fbbf24; }
+        .event-item.ability { color: #fbbf24; }
+        .event-item.status { color: #facc15; }
+        .event-item.stat_change { color: #38bdf8; }
         .event-item.field { color: #a78bfa; }
-        .event-item.effect { color: #38bdf8; }
+        .event-item.faint { color: #ef4444; }
+        .event-item.battle_end { color: #a855f7; font-weight: bold; }
         .btn-primary {
             background-color: #0284c7;
             color: white;
@@ -373,7 +376,7 @@
             ctx.strokeRect(x, y, bw, bh);
         }
 
-        // --- Levenshtein Distance for Fuzzy Deduplication (1-2 char difference check) ---
+        // Levenshtein Distance for Fuzzy Deduplication (1-2 char difference check)
         function getLevenshteinDistance(a, b) {
             const matrix = [];
             for (let i = 0; i <= b.length; i++) matrix[i] = [i];
@@ -390,31 +393,28 @@
             return matrix[b.length][a.length];
         }
 
-        // --- Pre-processing & Normalization Layer ---
+        // Pre-processing & Normalization Layer
         function preprocessOcrText(rawText) {
             if (!rawText) return null;
-            // Normalize whitespace & remove duplicate consecutive line entries
             let lines = rawText.split('\n')
                 .map(l => l.trim().replace(/\s+/g, ' '))
                 .filter(l => l.length > 0);
 
             if (lines.length === 0) return null;
-            let line = lines[0]; // Take primary active line
+            let line = lines[0];
 
-            // Filter out UI noise phrases
             const uiNoise = ['battle info', 'move info', 'hide summary', 'close', 'movetime', 'normal', 'psychic'];
             if (uiNoise.some(n => line.toLowerCase().includes(n))) return null;
 
-            // Common OCR Typo Fixes
+            // OCR Typo Cleanups
             line = line.replace(/farigirat|fatigiraf|farigitaf/gi, 'Farigiraf');
-            line = line.replace(/twin bean/gi, 'Twin Beam');
+            line = line.replace(/aerodacty/gi, 'Aerodactyl');
 
-            // Fuzzy Deduplication against last accepted line (1-2 char diff tolerance)
             const now = Date.now();
             if (state.lastAcceptedLine) {
                 const dist = getLevenshteinDistance(line.toLowerCase(), state.lastAcceptedLine.toLowerCase());
                 if (dist <= 2 && (now - state.lastAcceptedTime < 2000)) {
-                    return null; // Ignore duplicate / minor typo variation within short window
+                    return null; 
                 }
             }
 
@@ -423,30 +423,51 @@
             return line;
         }
 
-        // --- Modular Event Recognizers Pipeline ---
+        // --- Modular Recognizers Pipeline ---
         function parseLine(line) {
             const lower = line.toLowerCase();
             let event = { type: 'unknown', raw: line, timestamp: Date.now() };
 
-            // 1. Sent Out / Switch Recognizer
-            if (lower.includes('sent out') || lower.includes('go!')) {
-                event.type = 'pokemon_sent_out';
-                const match = line.match(/(?:sent out|go!)\s+([A-Za-z\s]+)!?/i);
-                if (match) {
-                    event.pokemon = match[1].trim();
-                    state.battle.activePokemon.add(event.pokemon);
-                }
-                return event;
-            }
-            if (lower.includes('withdrew') || lower.includes('come back')) {
-                event.type = 'pokemon_withdrew';
-                const match = line.match(/([A-Za-z\s]+)\s+(?:withdrew|come back)/i);
-                if (match) event.pokemon = match[1].trim();
+            // 1. Battle End / Forfeit Recognizer
+            if (lower.includes('forfeit') || lower.includes('defeated') || lower.includes('won the battle')) {
+                event.type = 'battle_end';
+                event.end_reason = lower.includes('forfeit') ? 'forfeit' : 'normal';
+                event.winner = lower.includes('defeated') || lower.includes('won') ? 'player' : 'opponent';
                 return event;
             }
 
-            // 2. Mega Evolution Recognizer
-            if (lower.includes('mega evolved')) {
+            // 2. Lead Pokémon / Sent Out Recognizer
+            if (lower.includes('sent out') || lower.includes('go!')) {
+                event.type = 'pokemon_sent_out';
+                const match = line.match(/(?:sent out|go!)\s+([A-Za-z\s and]+)!?/i);
+                if (match) {
+                    event.pokemon = match[1].trim();
+                    event.pokemon.split(' and ').forEach(p => state.battle.activePokemon.add(p.trim()));
+                }
+                return event;
+            }
+
+            // 3. Ability Activation Recognizers (Unnerve, Intimidate, Speed Boost)
+            if (lower.includes('too nervous to eat berries')) {
+                event.type = 'ability_activated';
+                event.ability = 'Unnerve';
+                return event;
+            }
+            if (lower.includes('attack fell') && (lower.includes('aerodactyl') || lower.includes('blaziken'))) {
+                event.type = 'ability_activated';
+                event.ability = 'Intimidate';
+                event.stat_change = { stat: 'attack', change: -1, targets: ['Aerodactyl', 'Blaziken'] };
+                return event;
+            }
+            if (lower.includes('speed rose') && lower.includes('blaziken')) {
+                event.type = 'ability_activated';
+                event.ability = 'Speed Boost';
+                event.stat_change = { stat: 'speed', change: +1 };
+                return event;
+            }
+
+            // 4. Mega Evolution Recognizers
+            if (lower.includes('has mega evolved')) {
                 event.type = 'mega_evolved';
                 const match = line.match(/([A-Za-z\s]+)\s+has Mega Evolved/i);
                 if (match) event.pokemon = match[1].trim();
@@ -459,7 +480,19 @@
                 return event;
             }
 
-            // 3. Move Recognizer (Damaging or Status Moves)
+            // 5. Move Failure Recognizer (Must check before standard move usage)
+            if (lower.includes('cannot use')) {
+                event.type = 'move_failed';
+                const match = line.match(/([A-Za-z\s]+)\s+cannot use\s+([A-Za-z\s]+)!?/i);
+                if (match) {
+                    event.user = match[1].trim();
+                    event.move = match[2].trim();
+                    event.reason = 'cannot_use';
+                }
+                return event;
+            }
+
+            // 6. Standard Move Used Recognizer (Damaging & Status moves)
             if (lower.includes(' used ')) {
                 event.type = 'move';
                 const match = line.match(/^([A-Za-z\s]+)\s+used\s+([A-Za-z\s]+)!?/i);
@@ -471,7 +504,20 @@
                 return event;
             }
 
-            // 4. Effect & Support Recognizer (Screens, Trick Room, Helpers)
+            // 7. Status & Flinch / Effect Recognizer
+            if (lower.includes('flinched')) {
+                event.type = 'status';
+                const match = line.match(/^([A-Za-z\s]+)\s+flinched/i);
+                if (match) event.target = match[1].trim();
+                event.effect = 'flinch';
+                return event;
+            }
+            if (lower.includes('paralyzed') || lower.includes('burned') || lower.includes('poisoned') || lower.includes('asleep')) {
+                event.type = 'status';
+                return event;
+            }
+
+            // 8. Field & Screen Effects Recognizer
             if (lower.includes('twisted the dimensions')) {
                 event.type = 'field';
                 state.battle.trickRoom = !state.battle.trickRoom;
@@ -483,36 +529,19 @@
                 event.effect = 'Helping Hand';
                 return event;
             }
-            if (lower.includes('made the opposing side stronger against special moves') || lower.includes('light screen')) {
+            if (lower.includes('light screen')) {
                 event.type = 'effect';
                 event.effect = 'Light Screen';
                 return event;
             }
-            if (lower.includes('wore off')) {
-                event.type = 'effect';
-                event.effect = 'Screen Expired';
-                return event;
-            }
 
-            // 5. Stat Change Recognizer
+            // 9. Stat Change Recognizer
             if (lower.includes('rose') || lower.includes('fell') || lower.includes('maximized')) {
                 event.type = 'stat_change';
                 return event;
             }
 
-            // 6. Status Condition Recognizer
-            if (lower.includes('paralyzed') || lower.includes('burned') || lower.includes('poisoned') || lower.includes('asleep') || lower.includes('frozen')) {
-                event.type = 'status';
-                return event;
-            }
-
-            // 7. Recoil & Passive Healing / Damage Recognizer
-            if (lower.includes('damaged by the recoil') || lower.includes('energy drained') || lower.includes('hurt by its burn')) {
-                event.type = 'passive_damage';
-                return event;
-            }
-
-            // 8. Faint Recognizer
+            // 10. Faint Recognizer
             if (lower.includes('fainted')) {
                 event.type = 'faint';
                 const match = line.match(/^([A-Za-z\s]+)\s+fainted/i);
@@ -520,12 +549,6 @@
                     event.target = match[1].trim();
                     state.battle.faintedPokemon.add(event.target);
                 }
-                return event;
-            }
-
-            // 9. Battle End Recognizer
-            if (lower.includes('defeated') || lower.includes('won the battle')) {
-                event.type = 'battle_end';
                 return event;
             }
 
@@ -554,7 +577,6 @@
             }
             container.scrollTop = container.scrollHeight;
 
-            // Update state panel UI
             elements.stateTurn.textContent = state.battle.turn;
             elements.stateField.textContent = state.battle.weather;
             elements.stateTrickRoom.textContent = state.battle.trickRoom ? 'Active' : 'Inactive';
@@ -584,11 +606,9 @@
 
                 elements.debugLog.textContent = `[Raw OCR] ${rawText.replace(/\n/g, ' | ')}`;
 
-                // Pre-process and normalize line through deduplication
                 const cleanedLine = preprocessOcrText(rawText);
                 if (!cleanedLine) return;
 
-                // Pass through modular parser pipeline
                 const event = parseLine(cleanedLine);
 
                 const currentTurn = state.battle.turn;
@@ -618,7 +638,6 @@
             elements.toggleParserBtn.className = 'w-full btn-primary';
         }
 
-        // Event Listeners setup
         elements.startCaptureBtn.addEventListener('click', startCapture);
         elements.stopCaptureBtn.addEventListener('click', stopCapture);
         elements.toggleParserBtn.addEventListener('click', () => {
